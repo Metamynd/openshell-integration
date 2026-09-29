@@ -504,3 +504,13 @@ Findings:
 - **The adapter's own budget holds.** Only `authorize` sits inside the 5 s middleware timeout; claim and capture happen after OpenShell forwards.
 - **Where to reduce it:** a MetaMynd region closer to the workload, a faster permit path (see the M0 S5 note), and settling the capture asynchronously. The upstream response does not depend on the capture.
 - Evidence run 1 (same session): **all 6 decisions joined in MetaMynd**, with the evidence record, trust-graph path and anchored Merkle proof for each, and the ledger was consistent for all 6. OCSF joined 5 of 6: the last denial's OCSF line had not reached the gateway yet when the logs were read immediately after it. The script now reads the logs after the 75 s anchoring wait.
+
+### Result: evidence, 29 Sep 2026 (task 5.1 passed)
+
+All six decisions joined across all four sources:
+- **OpenShell OCSF:** 6/6, with each denial matched on `middleware_denied:metamynd:<code>`.
+- **The adapter journal.**
+- **MetaMynd:** 6/6 each for the evidence record, the trust-graph evidence path, and the anchored Merkle inclusion proof.
+- **The ledger:** 6/6 consistent. The three allowed purchases each have exactly one row keyed by their `authorizationId`; the cap, escalation and wrong-merchant decisions have none.
+
+The join from OCSF to the journal uses the sandbox plus a time window, because OpenShell's OCSF events carry no `request_id`. That is an upstream request.
