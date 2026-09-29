@@ -126,8 +126,10 @@ burst() { # <sandbox> <merchant>
     'i=0; while [ $i -lt $N ]; do curl -sS -o /dev/null -w "%{http_code}\n" -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $PURCHASING_TOKEN" --data-binary "{\"amount\":1,\"currency\":\"MYR\",\"merchant\":\"$MERCHANT\"}" https://host.openshell.internal:8443/purchase-requests & i=$((i+1)); done; wait'
 }
 burst "$sb_a" OfficeMart > state/m3-burst-a.txt 2>&1 &
+pid_a=$!
 burst "$sb_b" PaperCo > state/m3-burst-b.txt 2>&1 &
-wait
+pid_b=$!
+wait "$pid_a" "$pid_b" # only the bursts: a bare `wait` would also wait for the adapter, which never exits
 codes_a=$(cat state/m3-burst-a.txt)
 codes_b=$(cat state/m3-burst-b.txt)
 rm -f state/m3-burst-a.txt state/m3-burst-b.txt
