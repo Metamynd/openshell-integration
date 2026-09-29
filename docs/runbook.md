@@ -237,3 +237,32 @@ It brings the stack up, runs the scenarios with no OpenShell in the path, and br
 The scenarios check allow, over-cap, wrong merchant, escalation over RM300, agent B's rules, replay of an allowed request, body tampering, a missing upstream bearer, and a request with no governance. Each scenario asserts the gate verdict, the gateway status and the ledger delta. Results go to `docs/report/runs/m1-native.json`.
 
 The RM350 scenario leaves an escalation in the tenant's review queue. It expires after 24 h.
+
+### Result: 29 Sep 2026 on COO-JASIM-NB1 against metamynd.ai (M1 passed, spike S4 closed)
+
+Enrolment:
+- agent A `did:hedera:testnet:z9YYbfMa…_0.0.10361974`
+- agent B `did:hedera:testnet:zAzPELLj…_0.0.10361974`
+- gateway counterparty `did:key:z6MkrfsVFhSnfGChuneqy72bFd1JCKddwDwGaHo7UDkjC7UB`
+
+All keys were generated in and held by the signer daemons, and both agents proved possession.
+
+| Scenario | Gate | Gateway | Ledger |
+| --- | --- | --- | --- |
+| A buys RM100 at OfficeMart | `allow/AUTHORIZED` | 201 | +1 |
+| A buys RM600 at OfficeMart | `block/SOP_SPEND_CAP` | – | 0 |
+| A buys RM100 at PaperCo | `block/MERCHANT_NOT_ALLOWED` | – | 0 |
+| A buys RM350 at OfficeMart | `escalate/AMOUNT_ABOVE_APPROVAL_THRESHOLD` | – | 0 |
+| B buys RM100 at PaperCo | `allow/AUTHORIZED` | 201 | +1 |
+| B buys RM100 at OfficeMart | `block/MERCHANT_NOT_ALLOWED` | – | 0 |
+| B buys RM250 at PaperCo | `block/SOP_SPEND_CAP` | – | 0 |
+| Replay of A's allowed request | – | 403 `AUTHORIZATION_ALREADY_CLAIMED` | 0 |
+| A authorized RM100, body says RM90 | `allow/AUTHORIZED` | 403 `PAYLOAD_NOT_BOUND` | 0 |
+| A allowed, no upstream bearer | `allow/AUTHORIZED` | 401 `UPSTREAM_AUTH_REQUIRED` | 0 |
+| No MetaMynd governance at all | – | 401 `MISSING_GOVERNANCE` | 0 |
+
+Findings:
+- **S4 closed.** `agentsafe-http-gateway` accepts the `x-magp-request` built as `buildSignedRequest(...)` plus `authorizationId`, with a fresh nonce after `authorize`. That is the `create-metamynd-agent` pattern, and the adapter will build the header the same way.
+- **An over-cap purchase is blocked by the SOP molecule** (`SOP_SPEND_CAP`) before the mandate's `SPEND_LIMIT_EXCEEDED` is reached. This confirms the scope's rule to record the actual reason rather than rely on evaluation order. Through the adapter it surfaces as `metamynd_sop_spend_cap`.
+- **Holds from the tamper and missing-bearer scenarios were never claimed**, so they lapse after 15 minutes. The gateway refused both before the claim.
+- **The RM350 escalation is pending in the POC tenant's queue.**
