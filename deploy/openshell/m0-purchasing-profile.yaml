@@ -1,0 +1,13 @@
+# Endpointless provider profile for M0 step 0.5. The credential binds only through
+# the sandbox policy's credential_binding (deploy/openshell/m0-upstream-policy.yaml).
+id: m0-purchasing-gw
+display_name: M0 purchasing gateway (POC)
+description: Throwaway bearer token for the M0 upstream-trust spike
+category: other
+credentials:
+  - name: api_token
+    description: Bearer token for the POC purchasing gateway
+    env_vars: [PURCHASING_TOKEN]
+    required: true
+    auth_style: bearer
+    header_name: authorization
