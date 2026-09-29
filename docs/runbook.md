@@ -464,3 +464,28 @@ Upstream report candidate: *"The first provider-credential use in a sandbox trig
 **Confirmed, 29 Sep 2026 (verify-only, sandboxes `8315f7f6…` and `151d7aef…`).** With R13a warming up B's credential and an 8 s pause, **every row passed and the burst was 10/10**, compared with 0/10 and 4/10 without the warm-up. The warm-up request itself completed before its reload landed (0 stale drops). So the loss comes from OpenShell's one-time reload after a sandbox's first credential use, not from load or from the adapter.
 
 Operational implication: until this is fixed upstream, a newly started sandbox's first burst of requests can be dropped (fail-closed). A deployment can warm each sandbox with one request after start.
+
+## M5: evidence and performance (build plan tasks 5.1, 5.2)
+
+```shell
+bash tools/m5-evidence.sh
+PERF_N=100 bash tools/m5-perf.sh
+```
+
+**Evidence (`tools/m5-evidence.sh`).** The script makes a known set of decisions through OpenShell: two allowed A purchases, A over its cap, A needing approval, one allowed B purchase, and B at A's merchant. It waits 75 s for MetaMynd's evidence batch to anchor. `packages/poc-cli/bin/evidence.mjs` then joins every decision across four sources:
+1. **OpenShell OCSF:** the sandbox and a time window, since OCSF carries no `request_id`. A denial must also show `middleware_denied:metamynd:<code>`.
+2. **The adapter journal:** `request_id`, agent, `authorizationId`, MetaMynd `eventId`.
+3. **MetaMynd:** `GET /evidence/:eventId` (decision digest, anchoring), then the trust-graph evidence path, then the public Merkle inclusion proof.
+4. **The ledger:** `Idempotency-Key = authorizationId`. An allowed purchase that returned 201 has exactly one row, and everything else has none.
+
+Output: `docs/report/runs/m5-evidence.{json,md}`.
+
+**Performance (`tools/m5-perf.sh`).** `PERF_N` sequential RM1 purchases per path, measured end to end by the client:
+
+| Path | Route |
+| --- | --- |
+| (a) openshell-only | sandbox → OpenShell (L4, TLS, L7, credential) → purchasing gateway without MetaMynd checks |
+| (b) metamynd-only | agent A → metamynd.ai authorize → enforcing purchasing gateway (no OpenShell) |
+| (c) combined | sandbox → OpenShell → MetaMynd adapter → enforcing purchasing gateway |
+
+Each sandbox is warmed up first, because of OpenShell's reload after first credential use. Output: `docs/report/runs/m5-perf.json` with p50, p95, p99, mean, max and status counts.

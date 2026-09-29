@@ -1,0 +1,24 @@
+# M5 perf baseline: the M3 purchasing policy with NO middleware attached, so the measured path is
+# OpenShell alone (L4 + TLS + L7 + credential substitution) in front of the purchasing gateway.
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only: [/bin, /usr, /lib, /proc, /dev/urandom, /app, /etc, /var/log]
+  read_write: [/sandbox, /tmp, /dev/null]
+landlock:
+  compatibility: best_effort
+
+network_policies:
+  purchasing:
+    name: purchasing-gateway
+    endpoints:
+      - host: host.openshell.internal
+        port: 8443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: /purchase-requests }
+        credential_binding: { provider: poc-purchasing }
+    binaries:
+      - { path: /usr/bin/curl }
