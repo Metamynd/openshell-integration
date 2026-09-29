@@ -266,3 +266,37 @@ Findings:
 - **An over-cap purchase is blocked by the SOP molecule** (`SOP_SPEND_CAP`) before the mandate's `SPEND_LIMIT_EXCEEDED` is reached. This confirms the scope's rule to record the actual reason rather than rely on evaluation order. Through the adapter it surfaces as `metamynd_sop_spend_cap`.
 - **Holds from the tamper and missing-bearer scenarios were never claimed**, so they lapse after 15 minutes. The gateway refused both before the claim.
 - **The RM350 escalation is pending in the POC tenant's queue.**
+
+## M2: adapter deny path (build plan tasks 2.1–2.6)
+
+```shell
+bash tools/m2-deny.sh
+```
+
+The real adapter (`packages/adapter/src/main.mjs`) is built with no MetaMynd allow path (`gate: null`), so it can only deny. The script does the following:
+
+1. Starts the purchasing stack.
+2. Starts the adapter on `127.0.0.1:50051` over TLS.
+3. Writes `gateway.toml`: middleware `metamynd` with `timeout = "5s"`, and the Docker driver using `local/openshell-supervisor:0.1.2-pca`.
+4. Creates a sandbox with `deploy/openshell/m2-policy.yaml`, whose L7 rules allow the requests under test so that any denial comes from the adapter.
+5. Binds the sandbox's UUID to agent A with `packages/adapter/bin/bindings.mjs`.
+6. Sends seven requests from inside the sandbox, each expected to be denied with a specific reason code:
+
+| Request | Expected `reason_code` |
+| --- | --- |
+| Valid RM100 OfficeMart purchase | `metamynd_gate_not_configured` (identity, binding, route and canonicalisation all passed) |
+| `Content-Encoding: gzip` | `metamynd_request_rejected` |
+| `amount` as a string | `metamynd_request_rejected` |
+| Duplicate JSON key | `metamynd_request_rejected` |
+| Field not in the route's `allowedFields` | `metamynd_request_rejected` |
+| L7-allowed path with no adapter route | `metamynd_route_not_allowed` |
+| Binding revoked mid-session | `metamynd_binding_unknown` |
+
+It then checks the evidence:
+- OCSF logs a `middleware_denied:metamynd:<code>` event for every request.
+- Every decision is in `state/journal/*.jsonl`, with no header values or bodies.
+- The purchasing gateway received nothing.
+
+On exit it always deletes the sandbox, revokes the binding, restores the gateway's defaults, and stops the adapter and the stack.
+
+Adapter modules: `describe` (negotiation), `jwt` (gateway token verification), `routes` (host-aware; reuses the http-gateway matcher), `canon` (strict JSON via the http-gateway parser), `registry` (atomic, last-good), `journal` (allow-listed fields, fsync), `reasons` (the OpenShell grammar), `adapter` (the pipeline). Every error path denies. A permit that cannot be journaled is withdrawn (`metamynd_internal_error`).

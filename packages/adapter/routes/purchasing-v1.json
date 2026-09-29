@@ -1,0 +1,12 @@
+[
+  {
+    "host": "host.openshell.internal",
+    "port": 8443,
+    "method": "POST",
+    "path": "/purchase-requests",
+    "action": "office_supplies.purchase",
+    "valueFields": ["amount", "currency", "merchant"],
+    "allowedFields": ["amount", "currency", "merchant", "items", "note"],
+    "riskLevel": "low"
+  }
+]
