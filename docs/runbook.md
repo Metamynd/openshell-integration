@@ -352,3 +352,27 @@ It then checks:
 - the purchasing token never appears in the adapter's journal or log.
 
 On exit it always deletes the sandboxes, provider and profile, revokes the bindings, restores the gateway, and stops everything.
+
+### Result: 29 Sep 2026 on COO-JASIM-NB1 (M3 passed)
+
+Sandbox A `e07cc3fa-…` was bound to agent A, and sandbox B `a7e3e8d7-…` to agent B, both through one adapter instance.
+
+| Check | Result |
+| --- | --- |
+| Sandbox's `PURCHASING_TOKEN` | placeholder only |
+| A buys RM1 at OfficeMart through OpenShell | **201, exactly one ledger row** (`x-magp-request` survived the chain; closes S6) |
+| B, identical request | 403 `metamynd_merchant_not_allowed` |
+| B buys RM1 at PaperCo | 201 |
+| A RM600 | 403 `metamynd_sop_spend_cap` |
+| A RM350 | 403 `metamynd_escalation_pending` (`AMOUNT_ABOVE_APPROVAL_THRESHOLD`) |
+| A RM100 after an RM1 history | 403 `metamynd_escalation_pending` (`SPEND_PATTERN_ANOMALY`) |
+| 20-request concurrent burst (10 per sandbox) | 17 × 201, 3 × 403; **ledger +17, exactly the 201s** |
+| Journal | 26 decisions, no cross-attribution, 21/21 allowed decisions with an `authorizationId` and a joined upstream response |
+| Purchasing token in the adapter journal or log | never |
+
+Findings from the four M3 runs:
+- **The allow path works through OpenShell unchanged.** The adapter's `x-magp-request` header mutation reaches the purchasing gateway after OpenShell substitutes the credential. The gateway re-verifies, claims and captures. Spike S6 is closed.
+- **MetaMynd's spend-anomaly floor is active on metamynd.ai** (`SPEND_ANOMALY_MODE=on`). It looks at the agent's last 20 purchases for the action and flags an amount above mean + 4 sd, or above 4× a uniform mean, once there are at least 5. It escalates even when every rule allows the purchase. That is a behavioural control OpenShell alone cannot express. The test purchases at the agents' RM1 scale and reports the RM100 case. Agent A is now effectively limited to small purchases, so a demo of the RM100 story needs fresh agents.
+- **Availability under bursts depends on the network path to metamynd.ai.** All refusals under 20-way concurrency were `fetch failed`, meaning the HTTPS call from the POC host never completed. This affected both the adapter's authorize (`GATE_UNREACHABLE`) and the purchasing gateway's claim (`GUARD_ERROR`). The rate was about 10–15% of burst calls, and every one failed closed. One earlier run (run 3) dropped the whole burst after the adapter allowed it; its sandbox logs were not captured. The script now keeps them for M4.
+- **Latency: an allowed decision took 1.4–3.1 s** end to end at the adapter under a burst, inside the 4 s gate deadline.
+- **OpenShell once returned an empty reply instead of the 403 body** for an adapter denial. It was not reproduced in later runs. The request was still blocked and no ledger row was written.

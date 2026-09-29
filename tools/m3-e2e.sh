@@ -190,7 +190,9 @@ say(allowed.length > 0 && joined.length === allowed.length, `${joined.length}/${
 const executed = allowed.filter((r) => responses.get(r.requestId) === 201).length;
 const refusedUpstream = allowed.filter((r) => responses.has(r.requestId) && responses.get(r.requestId) !== 201);
 console.log(`note  ${executed} allowed decisions executed (201); ${refusedUpstream.length} were refused by the purchasing gateway after the adapter allowed them`);
-for (const r of requests.filter((x) => x.decision !== 'allow' && x.decision !== 'passthrough' && x.amount === 1)) {
+// Burst refusals only: RM1 purchases at each sandbox's own merchant (B's deliberate OfficeMart denial is not one).
+const own = (x) => (x.sandboxId === sidA ? 'OfficeMart' : 'PaperCo') === x.merchant;
+for (const r of requests.filter((x) => x.decision !== 'allow' && x.decision !== 'passthrough' && x.amount === 1 && own(x))) {
   console.log(`note  burst refusal in ${r.sandboxId.slice(0, 8)}: ${r.decision} ${r.reasonCode ?? r.osReasonCode} (${r.latencyMs} ms)`);
 }
 say(!lines.some((l) => l.includes(token)), 'the purchasing token never appears in the adapter journal');
