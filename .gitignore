@@ -1,2 +1,4 @@
 ﻿# Local reference clone of NVIDIA/OpenShell (not vendored)
 openshell-upstream/
+
+node_modules/
