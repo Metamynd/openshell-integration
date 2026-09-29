@@ -142,3 +142,17 @@ The probe then times two classes of 20 signed `POST /policy/mandate/authorize` c
 - an allowed RM1 class, which creates small unclaimed holds that lapse after 15 minutes.
 
 Results go to stdout and to `docs/report/runs/m0-latency.json`. The p95 figure sets the middleware `timeout` (design §5.3).
+
+### Result: 29 Sep 2026 from COO-JASIM-NB1 to metamynd.ai (step 0.6 passed, spike S5 closed)
+
+The POC tenant was created and its principal verified by a platform admin. The probe agent is `did:hedera:testnet:zJ4H95Gq…_0.0.10361974`.
+
+| Class (20 calls each; includes signing) | Verdict | min | p50 | p95 | max |
+| --- | --- | --- | --- | --- | --- |
+| RM1 at PaperCo (not on the allow-list) | `block/MERCHANT_NOT_ALLOWED` ×20 | 357 ms | 405 ms | 929 ms | 974 ms |
+| RM1 at OfficeMart | `allow/AUTHORIZED` ×20 | 994 ms | 1213 ms | 1570 ms | 1573 ms |
+
+Findings:
+- A permit costs about 800 ms more than a deny. The permit path also inserts the hold, anchors the decision to the ledger, and signs the Action Passport. This is worth raising with the MetaMynd team as a performance item.
+- The design's middleware timeout goes from 3 s to **5 s**, with a 4 s gate deadline.
+- **`riskLevel` is required.** metamynd.ai enforces the EU AI Act Standard, whose risk rule escalates any request without a well-formed `riskLevel` (`CONTEXT_UNVERIFIABLE`). The first probe run sent none and escalated all 20 allowed calls; those escalations are pending in the POC tenant's review queue and expire after 24 h. The adapter now takes `riskLevel` from operator route config (design §4.2).
