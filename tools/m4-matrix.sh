@@ -134,6 +134,7 @@ before=$(ledger_count)
 # The merchant is a positional argument, not `exec --env`: on v0.1.2 an exec --env appears to change the
 # sandbox's provider environment, and the supervisor reload drops every in-flight L7 tunnel (runbook M4).
 burst() { openshell sandbox exec -n "$1" --no-tty -- sh -c 'for i in 1 2 3 4 5; do curl -sS -m 20 -o /dev/null -w "%{http_code}\n" -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $PURCHASING_TOKEN" --data-binary "{\"amount\":1,\"currency\":\"MYR\",\"merchant\":\"$1\"}" https://host.openshell.internal:8443/purchase-requests & done; wait' sh "$2" 2>/dev/null; }
+drops_before=$(stale_drops)
 burst "$sb_a" OfficeMart > state/m4-burst-a.txt & pa=$!
 burst "$sb_b" PaperCo > state/m4-burst-b.txt & pb=$!
 wait "$pa" "$pb"
