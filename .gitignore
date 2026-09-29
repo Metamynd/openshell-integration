@@ -1,2 +1,12 @@
-﻿# Local reference clone of NVIDIA/OpenShell (not vendored)
+# Local reference clone of NVIDIA/OpenShell (not vendored)
 openshell-upstream/
+
+node_modules/
+
+# Runtime state, secrets and generated certificates (build plan: definition of done)
+state/
+.env*
+deploy/certs/*
+!deploy/certs/*.sh
+*.pem
+*.key
