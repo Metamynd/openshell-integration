@@ -76,7 +76,7 @@ A Node.js 22 (ESM) gRPC server that implements two services from the pinned prot
 | `binding` | `sandbox_id` → `Binding` lookup from the registry (§4.4). A missing, revoked or generation-mismatched binding is denied. |
 | `route` | Matches `(host, port, method, path)` to a route from `routes.json` (§4.2), deny-by-default. Returns the pinned `action` and the field rules. |
 | `canon` | Rejects any request `content-encoding`, a non-JSON `content-type`, oversize bodies and duplicate or conflicting headers. Parses the body with the gateway's `parseStrictJson`, enforces `allowedFields` and `valueFields`, and extracts `{amount, currency, merchant, resource}`. |
-| `signer` | One cached `agentsafe-guard` instance per binding, created with `createGuard({ api, agentDid, keyProvider: 'daemon', daemonSocketPath })`. It calls `buildSignedRequest({ action, amount, currency, merchant, resource, context, trace, payload })` with `payload` = the parsed body, which produces `payloadDigest`/`payloadSignature` and `envelopeSignature`. |
+| `signer` | One cached `agentsafe-guard` instance per binding, created with `createGuard({ api, agentDid, keyProvider: 'daemon', daemonSocketPath })`. It calls `buildSignedRequest({ action, amount, currency, merchant, resource, context, trace, payload })` with `payload` = the parsed body and `context` = `{ riskLevel }` taken from the matched route (§4.2). That call produces `payloadDigest`/`payloadSignature` and `envelopeSignature`. |
 | `gate` | `POST {MM_API}/policy/mandate/authorize` with the signed request and a hard deadline (§5.3). It classifies the response into `Verdict {permit, decision, reasonCode, authorizationId, eventId, escalationId, envelopeId}`. Only HTTP 200 with `allow` or `observe` is a permit. |
 | `decide` | Builds `HttpRequestResult`. A permit gives `ALLOW` plus a header mutation `x-magp-request` (overwrite) = JSON of `{...signed, authorizationId}`. Anything else gives `DENY` plus a mapped `reason_code` (§4.5). It never replaces the body. |
 | `response` | `HttpResponsePreReturn.Evaluate`: at preflight it records `status_code` against `request_id` and returns `skip`. It never blocks. It ignores later events. |
@@ -190,6 +190,7 @@ network_middlewares:
     "action": "office_supplies.purchase",
     "valueFields": ["amount", "currency", "merchant"],
     "allowedFields": ["amount", "currency", "merchant", "items", "note"],
+    "riskLevel": "low",
     "resourceFrom": null },
   { "host": "purchasing.poc.internal", "port": 8443, "method": "GET", "path": "/purchase-requests/*",
     "action": null }
@@ -197,6 +198,12 @@ network_middlewares:
 ```
 
 A route with `"action": null` is read-only: the adapter allows it without calling MetaMynd and journals it as `passthrough`. An unmatched `(host, port, method, path)` is denied with `metamynd_route_not_allowed`.
+
+Every governed route must set `riskLevel` (`low` | `medium` | `high` | `critical`). The adapter sends it as `context.riskLevel`, and the agent's request can never supply it.
+
+This is required because metamynd.ai enforces the EU AI Act Standard, whose risk rule escalates any request without a well-formed `riskLevel` as `CONTEXT_UNVERIFIABLE`. Spike S5 observed this on production: all 20 allowed-class probes escalated until the field was added.
+
+The value is signed by `envelopeSignature`. At the gate its provenance is still "agent claim", because the adapter signs as the agent, so an owner who wants a hard floor sets the mandate's `riskTier`.
 
 ### 4.3 Policy `config` Struct (validated by `ValidateConfig`)
 

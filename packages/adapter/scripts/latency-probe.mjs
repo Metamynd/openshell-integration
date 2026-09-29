@@ -81,11 +81,15 @@ const config = existsSync(configPath) ? JSON.parse(readFileSync(configPath, 'utf
 const guard = createGuard({ config: { ...config, apiBase: api } });
 
 console.log(`probing ${api} as ${config.agentDid}, ${calls} calls per class`);
+// The enforced EU AI Act Standard's risk rule escalates (CONTEXT_UNVERIFIABLE) when riskLevel
+// is missing, so every request carries one. In the adapter it comes from operator route
+// config (design §4.2), never from the agent; the context signature covers it.
+const context = { riskLevel: 'low' };
 const results = [
   // Denied by the mandate's merchant allow-list: no hold is minted.
-  await timeClass(guard, 'deny (merchant)', { action: scope, amount: 1, currency: 'MYR', merchant: 'PaperCo' }, 'block/'),
+  await timeClass(guard, 'deny (merchant)', { action: scope, amount: 1, currency: 'MYR', merchant: 'PaperCo', context }, 'block/'),
   // Allowed: each mints a small unclaimed hold that lapses after 15 minutes.
-  await timeClass(guard, 'allow (RM1 OfficeMart)', { action: scope, amount: 1, currency: 'MYR', merchant: 'OfficeMart' }, 'allow/'),
+  await timeClass(guard, 'allow (RM1 OfficeMart)', { action: scope, amount: 1, currency: 'MYR', merchant: 'OfficeMart', context }, 'allow/'),
 ];
 
 mkdirSync('docs/report/runs', { recursive: true });
