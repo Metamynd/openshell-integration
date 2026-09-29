@@ -42,7 +42,7 @@ gw_requests_before=$(grep -c '"method":' state/logs/gateway.log || true)
 echo "== starting the MetaMynd adapter on 127.0.0.1:50051 (TLS + gateway JWT, deny path only)"
 : > "$adapter_log"
 ADAPTER_TLS_CERT=state/certs/server.pem ADAPTER_TLS_KEY=state/certs/server.key OPENSHELL_JWT_DIR="$OPENSHELL_JWT_DIR" \
-  ADAPTER_REGISTRY=state/bindings.json ADAPTER_JOURNAL_DIR=state/journal \
+  ADAPTER_REGISTRY=state/bindings.json ADAPTER_JOURNAL_DIR=state/journal ADAPTER_GATE=off \
   nohup node packages/adapter/src/main.mjs >> "$adapter_log" 2>&1 &
 adapter_pid=$!
 for _ in $(seq 1 20); do grep -q '"event":"listening"' "$adapter_log" && break; sleep 0.5; done
