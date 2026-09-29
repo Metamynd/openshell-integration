@@ -37,7 +37,7 @@ M1 and M2 can overlap after M0. The critical path is M0 → M2 → M3 → M4 →
 | 0.3 | Install OpenShell `v0.1.2` pinned. `openshell status`. Create a throwaway sandbox with `enforcement: enforce`. Show GET allowed and POST denied by L7 | run log |
 | 0.4 | Vendor `proto/v0.1.2/{supervisor_middleware,extension}.proto`. Generate the loader. Write a **stub middleware** (TLS with a private CA, JWT verify, always `DENY stub_deny`). Register it in `gateway.toml`, attach it to a test host, and observe the 403 and the OCSF `middleware_denied:…:stub_deny` (S2) | PR `feat(adapter): stub deny middleware` |
 | 0.5 | Purchasing upstream reachability and TLS trust: try a derived supervisor image with the POC CA. Fall back to plain HTTP (S3) | decision recorded in `design.md` §11 |
-| 0.6 | Bring up the MetaMynd backend locally (compose, Hedera testnet operator, `VERIFICATION_STANDARD=manual`, sync anchoring off). Time 20 signed authorize calls with `demo-mandate.ts` (S5) | latency numbers; timeout decision |
+| 0.6 | Create the POC tenant on `metamynd.ai` (register, then a platform admin verifies the principal). Run `tools/m0-latency.sh`: it provisions a throwaway probe agent and times signed authorize calls from COO-JASIM-NB1 (S5) | latency numbers; timeout decision |
 
 **Exit:** the stub middleware denies a real sandbox request, the OCSF event is captured, and S1, S2, S3 and S5 are closed or have their fallback chosen. **If S1 fails,** stop and re-host on a Linux VM before continuing (add about 0.5 day).
 
@@ -112,8 +112,8 @@ M1 and M2 can overlap after M0. The critical path is M0 → M2 → M3 → M4 →
 
 ## Dependencies and prerequisites
 
-- **Hedera testnet operator account** (ID + key) for the local MetaMynd backend. This is needed at M0 step 0.6.
-- **AgentSafe PR #785** (gate fixes) merged and the backend running that commit, so the matrix exercises the fixed gate. Record the commit in `versions.lock`.
+- **A POC tenant on `https://metamynd.ai`** with a verified principal. The adapter talks only to the hosted service. MetaMynd holds the Hedera operator account, so the POC needs no Hedera credentials. Tenant credentials live in `.env.poc` on the POC host, which is gitignored.
+- **AgentSafe PR #785** (gate fixes) deployed to `metamynd.ai`. It ships in release `v1.71.0`, which is recorded in `versions.lock`.
 - **Published package versions:** `@metamynd/agentsafe-guard` ≥0.17.0, `agentsafe-http-gateway` ≥0.15.0, `agentsafe-mcp-guard` ≥0.17.1 and `agentsafe-signer` ≥0.19.1. Confirm they are on npm before M1. Otherwise consume them from the AgentSafe workspace by path.
 - **Docker ≥28** in WSL2. An optional LLM API key only if the agent runs in LLM mode (the matrix uses deterministic mode).
 

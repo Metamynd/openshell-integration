@@ -106,3 +106,39 @@ What this confirms for the design:
 - The OCSF denial reason has the form `middleware_denied:<policy map key>:<reason_code>`.
 
 npm reports that `protobufjs`'s postinstall script is not in `allowScripts`. It is skipped, and gRPC works without it.
+
+## MetaMynd POC tenant and latency probe (build plan step 0.6, spike S5)
+
+The POC uses the hosted MetaMynd service at `https://metamynd.ai/api/v1`, release `v1.71.0`, which contains AgentSafe #785. MetaMynd holds the Hedera operator account, so nothing on the POC host needs Hedera credentials.
+
+### Tenant setup (one time)
+
+1. Register a dedicated POC user at `https://metamynd.ai` using an address used only for the POC.
+2. Create the POC owner principal: a fictional organisation such as "Acme Office Supplies (POC)".
+3. A platform admin approves the principal's verification. Agents stay on **testnet**, so no real value moves.
+4. On the POC host, create `~/src/openshell-integration/.env.poc`. It is gitignored. Restrict it with `chmod 600 .env.poc`.
+
+   ```shell
+   MM_USERNAME=<poc user email>
+   MM_PASSWORD=<poc user password>
+   ```
+
+### Latency probe
+
+```shell
+bash tools/m0-latency.sh
+```
+
+On first run, the probe logs in as the POC user. It then provisions a throwaway agent, `poc-latency-probe`, through `POST /onboarding/agent` with these settings:
+- a managed key on testnet;
+- scope `office_supplies.purchase`;
+- currency MYR, with a per-transaction cap of RM500 and a total of RM100,000;
+- merchant `OfficeMart`.
+
+It saves the returned guard config, which includes the agent key, to `state/latency-agent.json` with mode 0600, and reuses it on later runs.
+
+The probe then times two classes of 20 signed `POST /policy/mandate/authorize` calls each:
+- a merchant-denied class, which creates no hold;
+- an allowed RM1 class, which creates small unclaimed holds that lapse after 15 minutes.
+
+Results go to stdout and to `docs/report/runs/m0-latency.json`. The p95 figure sets the middleware `timeout` (design §5.3).
