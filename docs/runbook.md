@@ -300,3 +300,19 @@ It then checks the evidence:
 On exit it always deletes the sandbox, revokes the binding, restores the gateway's defaults, and stops the adapter and the stack.
 
 Adapter modules: `describe` (negotiation), `jwt` (gateway token verification), `routes` (host-aware; reuses the http-gateway matcher), `canon` (strict JSON via the http-gateway parser), `registry` (atomic, last-good), `journal` (allow-listed fields, fsync), `reasons` (the OpenShell grammar), `adapter` (the pipeline). Every error path denies. A permit that cannot be journaled is withdrawn (`metamynd_internal_error`).
+
+### Result: 29 Sep 2026 on COO-JASIM-NB1 (M2 passed)
+
+- The gateway negotiated with the adapter using a verified JWT and validated the policy's `config.routes`.
+- Sandbox `02f76672-61e4-45ec-b96c-71324f94c04d` was bound to agent A, generation 1. The UUID came from `openshell sandbox get <name> -o json`.
+- All seven requests got their expected reason code:
+  - valid purchase → `metamynd_gate_not_configured`
+  - gzip → `metamynd_request_rejected`
+  - string amount → `metamynd_request_rejected`
+  - duplicate key → `metamynd_request_rejected`
+  - extra field → `metamynd_request_rejected`
+  - unrouted path → `metamynd_route_not_allowed`
+  - revoked binding → `metamynd_binding_unknown`, effective within about 1 s of the revoke
+- OCSF logged 7 `middleware_denied:metamynd:*` events.
+- The journal holds 7 decisions for the sandbox and no header values or bodies.
+- The purchasing gateway received no requests.
