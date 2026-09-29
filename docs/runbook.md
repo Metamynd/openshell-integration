@@ -107,6 +107,36 @@ What this confirms for the design:
 
 npm reports that `protobufjs`'s postinstall script is not in `allowScripts`. It is skipped, and gRPC works without it.
 
+## Upstream trust for the purchasing gateway (build plan step 0.5, spike S3)
+
+```shell
+bash tools/m0-upstream.sh
+```
+
+The script proves that a sandbox can reach a host-local purchasing stand-in (`tools/lib/upstream-echo.mjs`) at `host.openshell.internal` two ways:
+
+- **HTTPS on port 8443:** the stand-in presents a certificate from the POC private CA, with SAN `DNS:host.openshell.internal`.
+- **Plain HTTP on port 8081:** the fallback.
+
+On both routes it checks that L7 enforcement applies, and that the `m0-purchasing` provider's bearer token is substituted after the sandbox while the sandbox only ever holds a placeholder.
+
+Facts this relies on (OpenShell v0.1.2, Docker driver):
+- **Upstream TLS trust.** The supervisor verifies upstream TLS against `/etc/ssl/certs/ca-certificates.crt` inside its own image. v0.1.2 has no config setting to add a private CA with the Docker driver. The script therefore builds `local/openshell-supervisor:0.1.2-pca`: the stock image with the stock bundle plus the POC CA, from `deploy/images/supervisor-pca`. It points the driver at that image through `[openshell.drivers.docker] supervisor_image`. The tag is local-only; a `latest` or `dev` tag would be re-pulled.
+- **Loopback reachability.** Loopback destinations are always blocked, even with `allowed_ips`. The single exception is the policy host `host.openshell.internal`, which the Docker driver pins to the gateway's address (`127.0.0.1`), so no `allowed_ips` entry is needed. Custom names such as `purchasing.poc.internal` would need real DNS, and a loopback answer would still be blocked.
+- **Credential binding.** The credential binds through an endpointless provider profile (`deploy/openshell/m0-purchasing-profile.yaml`) and `credential_binding` in the sandbox policy.
+
+On exit the script always deletes the sandbox, the `m0-purchasing` provider and the `m0-purchasing-gw` profile. It removes `gateway.toml` and restarts the gateway on the stock supervisor image. The derived image stays in local Docker for reuse.
+
+### Result: 29 Sep 2026 on COO-JASIM-NB1 (step 0.5 passed, spike S3 closed, M0 complete)
+
+- `local/openshell-supervisor:0.1.2-pca` was built from the stock supervisor bundle plus the POC CA (151 roots), and the sandbox's supervisor ran it.
+- The sandbox env held only `PURCHASING_TOKEN=openshell:resolve:env:v…_PURCHASING_TOKEN`. The real token appeared nowhere in the sandbox environment.
+- `POST https://host.openshell.internal:8443/purchase-requests` reached the stand-in over the private-CA TLS hop with `auth_is_real_token: true`.
+- `POST http://host.openshell.internal:8081/purchase-requests` did the same (`auth_is_real_token: true`).
+- L7 enforcement held on the TLS path: `DELETE` got a 403.
+
+**Decision:** the purchasing gateway runs HTTPS on `127.0.0.1:8443` as `host.openshell.internal`, trusted through the derived supervisor image. The plain-HTTP fallback is not needed. A profile with `auth_style: bearer` also needs `header_name: authorization` in v0.1.2.
+
 ## MetaMynd POC tenant and latency probe (build plan step 0.6, spike S5)
 
 The POC uses the hosted MetaMynd service at `https://metamynd.ai/api/v1`, release `v1.71.0`, which contains AgentSafe #785. MetaMynd holds the Hedera operator account, so nothing on the POC host needs Hedera credentials.
