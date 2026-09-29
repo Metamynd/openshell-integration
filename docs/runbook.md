@@ -489,3 +489,18 @@ Output: `docs/report/runs/m5-evidence.{json,md}`.
 | (c) combined | sandbox → OpenShell → MetaMynd adapter → enforcing purchasing gateway |
 
 Each sandbox is warmed up first, because of OpenShell's reload after first credential use. Output: `docs/report/runs/m5-perf.json` with p50, p95, p99, mean, max and status counts.
+
+### Result: latency, 29 Sep 2026 from COO-JASIM-NB1 (100 sequential RM1 purchases per path, all 201)
+
+| Path | p50 | p95 | p99 | mean | max |
+| --- | --- | --- | --- | --- | --- |
+| (a) OpenShell only | 47 ms | 75 ms | 80 ms | 50 ms | 87 ms |
+| (b) MetaMynd only | 2873 ms | 3547 ms | 5302 ms | 2965 ms | 5527 ms |
+| (c) combined | 3024 ms | 3775 ms | 4256 ms | 3092 ms | 4598 ms |
+
+Findings:
+- **OpenShell adds about 50 ms.** The combined path costs roughly the sum of the other two: 47 + 2873 ≈ 2920 ms against 3024 ms measured, so the adapter's own overhead is about 100 ms.
+- **The cost is MetaMynd round trips.** Each purchase makes three sequential calls from the POC host to metamynd.ai: the adapter's `authorize`, then the purchasing gateway's claim (`effect/dispatching`) and `capture`. Each takes about 1 s from Malaysia.
+- **The adapter's own budget holds.** Only `authorize` sits inside the 5 s middleware timeout; claim and capture happen after OpenShell forwards.
+- **Where to reduce it:** a MetaMynd region closer to the workload, a faster permit path (see the M0 S5 note), and settling the capture asynchronously. The upstream response does not depend on the capture.
+- Evidence run 1 (same session): **all 6 decisions joined in MetaMynd**, with the evidence record, trust-graph path and anchored Merkle proof for each, and the ledger was consistent for all 6. OCSF joined 5 of 6: the last denial's OCSF line had not reached the gateway yet when the logs were read immediately after it. The script now reads the logs after the 75 s anchoring wait.
