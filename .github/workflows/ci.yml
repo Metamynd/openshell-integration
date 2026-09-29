@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  adapter:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: adapter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: adapter/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  pins:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Vendored protos match the pinned OpenShell commit
+        run: scripts/sync-protos.sh --check
+      - name: Shell scripts parse
+        run: for f in scripts/*.sh; do bash -n "$f"; done
