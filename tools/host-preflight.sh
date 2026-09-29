@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# WP0 host checks for running OpenShell v0.1.2 under WSL2 (or a Linux VM).
+# M0 host checks (build plan step 0.2, spike S1) for running OpenShell v0.1.2 under WSL2 (or a Linux VM).
 # Prints one line per check and exits non-zero if any required check fails.
 set -uo pipefail
 
