@@ -153,7 +153,7 @@ grpc_endpoint     = "https://host.openshell.internal:50051"
 tls_ca_cert_path  = "/etc/openshell/certs/metamynd-poc-ca.pem"
 audience          = "urn:openshell:extension:middleware:metamynd"
 max_payload_bytes = 1048576
-timeout           = "3s"
+timeout           = "5s"
 ```
 
 ### 4.2 Sandbox policy and adapter routes
@@ -315,8 +315,10 @@ Steps 1–6 are the same as §5.1. The gate returns 403 `{decision: block, reaso
 
 ### 5.3 Deadlines and failure handling
 
-- The registration `timeout` is 3 s. The adapter's internal budget is 2.5 s, split as: sign ≤ 300 ms, gate ≤ 2 s, and the remainder for canonicalisation and response.
-- If the adapter exceeds 3 s, OpenShell applies `fail_closed`.
+- The registration `timeout` is 5 s. The adapter's internal budget is 4.5 s, split as: sign ≤ 300 ms, gate ≤ 4 s, and the remainder for canonicalisation and response.
+  - Spike S5 measured the path from COO-JASIM-NB1 to metamynd.ai: allow p50 1.21 s, p95 1.57 s, max 1.57 s; deny p50 0.41 s, p95 0.93 s.
+  - The 4 s gate deadline is about 2.5 times the observed allow p95.
+- If the adapter exceeds 5 s, OpenShell applies `fail_closed`.
 - Every exception, non-200 gate response, verdict without a recognised shape or signer error maps to a deny code (§4.5). The adapter never returns `ALLOW` from an error path. This is enforced by a single `decide(verdict)` function with exhaustive tests.
 - **Orphaned holds:** an allowed request can mint a hold that never reaches the purchasing gateway. This happens when a later stage denies it, the sandbox disconnects, or the upstream fails before the claim. An unclaimed hold lapses after 15 min and consumes cap until then. The optional sweeper (M4) voids unclaimed holds older than 60 s. If a void races a late claim, the claim is refused and the purchase fails closed.
 
@@ -423,5 +425,5 @@ CI runs unit and contract tests on every PR. System tests run manually on the WS
 | S2 | Can supervisors (Docker driver) reach `host.openshell.internal:50051` on WSL2, and does TLS with a private CA work? | Run the adapter in a container on the gateway's Docker network |
 | S3 | How does the supervisor trust the purchasing gateway's private CA? Upstream roots come from the **supervisor image's** system bundle. | Build a derived `supervisor:v0.1.2` image with the POC CA; else serve the purchasing gateway over plain HTTP on port 80, and record that TLS was not exercised |
 | S4 | Does `agentsafe-http-gateway` accept the adapter-built `x-magp-request` unchanged (the `authorizationId` field, the context-signature default)? | Build the header with `metamynd-client`'s `SignedRequest.headers()` shape |
-| S5 | What is the MetaMynd authorize latency locally (with sync anchoring off)? It drives the 3 s timeout. | Raise to 5 s and note it |
+| S5 | What is the MetaMynd authorize latency from the POC host? It drives the middleware timeout. | **Closed:** allow p95 1.57 s against metamynd.ai; timeout set to 5 s, with a 4 s gate deadline (§5.3) |
 | S6 | Can a provider placeholder in `Authorization` reach the purchasing gateway intact after substitution while `x-magp-request` survives? | Carry the upstream credential through the Credential Vault instead (`resolveCredential`) |
