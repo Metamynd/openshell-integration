@@ -249,6 +249,8 @@ Codes the adapter generates itself:
 | Signer unreachable or refused | `metamynd_signer_unavailable` |
 | Gate timeout, 5xx or response without a verdict shape | `metamynd_unavailable` |
 | MetaMynd escalate | `metamynd_escalation_pending` |
+| MetaMynd gate not configured (the deny-only build in M2) | `metamynd_gate_not_configured` |
+| Unexpected adapter error, or a permit that could not be journaled | `metamynd_internal_error` |
 
 The free-text `reason` is always a short diagnostic that contains no request content.
 
