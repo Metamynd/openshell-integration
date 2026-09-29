@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # M3 exit test (build plan tasks 3.1-3.6): a governed purchase from inside an OpenShell sandbox
-# executes exactly once. Agent A's sandbox buys RM100 at OfficeMart through
+# executes exactly once. Agent A's sandbox buys at OfficeMart (at the agent's established RM1 scale; see below) through
 #   sandbox -> OpenShell supervisor -> MetaMynd adapter (authorize at metamynd.ai as agent A,
 #   signed x-magp-request) -> credential substitution -> purchasing gateway (re-verify, claim,
 #   capture) -> mock purchasing API ledger,
@@ -107,15 +107,15 @@ placeholder=$(openshell sandbox exec -n "$sb_a" --no-tty -- sh -c 'printf %s "$P
 
 echo "== governed purchases through OpenShell"
 before=$(ledger_count)
-r=$(buy "$sb_a" '{"amount":100,"currency":"MYR","merchant":"OfficeMart","items":[{"sku":"A4-PAPER","qty":10}]}')
-echo "   A RM100 OfficeMart -> $(status_of "$r") $(body_of "$r" | head -c 200)"
+r=$(buy "$sb_a" '{"amount":1,"currency":"MYR","merchant":"OfficeMart","items":[{"sku":"A4-PAPER","qty":10}]}')
+echo "   A RM1 OfficeMart -> $(status_of "$r") $(body_of "$r" | head -c 200)"
 [[ $(status_of "$r") == 201 ]] && ok "agent A's purchase executed (201 from the purchasing API)" \
   || bad "agent A's purchase -> $(status_of "$r") $(body_of "$r" | grep -o '"reason_code":"[^"]*"' | cut -d'"' -f4) (journal: $(journal_last "$sid_a"))"
 after=$(ledger_count)
 (( after == before + 1 )) && ok "exactly one ledger row was written" || bad "ledger changed by $((after - before)) (want 1)"
 
 before=$(ledger_count)
-r=$(buy "$sb_b" '{"amount":100,"currency":"MYR","merchant":"OfficeMart","items":[{"sku":"A4-PAPER","qty":10}]}')
+r=$(buy "$sb_b" '{"amount":1,"currency":"MYR","merchant":"OfficeMart","items":[{"sku":"A4-PAPER","qty":10}]}')
 code=$(body_of "$r" | grep -o '"reason_code":"[^"]*"' | cut -d'"' -f4)
 if [[ $(status_of "$r") == 403 && "$code" == metamynd_merchant_not_allowed ]]; then
   ok "agent B's identical request denied ($code)"
@@ -126,7 +126,7 @@ else
   bad "agent B's identical request -> $(status_of "$r") ${code:-} (journal: $(journal_last "$sid_b"))"
 fi
 
-r=$(buy "$sb_b" '{"amount":100,"currency":"MYR","merchant":"PaperCo"}')
+r=$(buy "$sb_b" '{"amount":1,"currency":"MYR","merchant":"PaperCo"}')
 [[ $(status_of "$r") == 201 ]] && ok "agent B's own purchase at PaperCo executed" || bad "agent B at PaperCo -> $(status_of "$r")"
 
 for case in '600:metamynd_sop_spend_cap' '350:metamynd_escalation_pending'; do
@@ -135,6 +135,15 @@ for case in '600:metamynd_sop_spend_cap' '350:metamynd_escalation_pending'; do
   code=$(body_of "$r" | grep -o '"reason_code":"[^"]*"' | cut -d'"' -f4)
   [[ "$code" == "$want" ]] && ok "agent A RM$amt -> $code" || bad "agent A RM$amt -> $(status_of "$r") ${code:-} (want $want)"
 done
+
+# MetaMynd's spend-anomaly floor (metamynd.ai runs SPEND_ANOMALY_MODE=on): an amount far above
+# the agent's last 20 purchases (mean + 4 sd, or 4x the mean when they are uniform) is escalated
+# to a person even when every rule allows it. Reported, not asserted: it depends on history.
+before=$(ledger_count)
+r=$(buy "$sb_a" '{"amount":100,"currency":"MYR","merchant":"OfficeMart"}')
+code=$(body_of "$r" | grep -o '"reason_code":"[^"]*"' | cut -d'"' -f4)
+printf 'note  behavioural control: agent A RM100 after a RM1 history -> %s %s (journal: %s, ledger +%d)\n' \
+  "$(status_of "$r")" "${code:-}" "$(journal_last "$sid_a")" "$(( $(ledger_count) - before ))"
 
 echo "== concurrency: $concurrent parallel purchases from each sandbox through one adapter"
 before=$(ledger_count)
