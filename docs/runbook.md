@@ -57,3 +57,52 @@ What this shows for the design:
 - L7 enforcement works with `enforcement: enforce` on this host.
 - The L4 and L7 decisions are logged separately: `NET:OPEN … engine:opa`, then `HTTP:<method> … engine:l7`.
 - The deny body includes the policy name and binary, which will sit alongside the middleware-denial body (`error: middleware_denied`) once the adapter is attached.
+
+## M0 stub middleware (build plan step 0.4, spike S2)
+
+```shell
+bash tools/m0-stub.sh
+```
+
+The script performs these steps:
+
+1. Generates a private CA and a server certificate for `127.0.0.1` in `state/certs/`.
+2. Starts the stub (`packages/adapter/src/stub-main.mjs`) on `127.0.0.1:50051` over TLS. The stub checks the gateway's Ed25519 JWT against `~/.local/state/openshell/tls/jwt/public.pem`.
+3. Registers the stub by writing `~/.config/openshell/gateway.toml` and restarting the `openshell-gateway` user service.
+4. Creates a sandbox with `deploy/openshell/m0-stub-policy.yaml`. That policy's L7 rules *allow* `POST /markdown`, so a denial of that request can only come from the middleware.
+5. Checks four things: a 403 `middleware_denied` response with `reason_code: stub_deny`; an authenticated `EvaluateHttpRequest` in the stub log whose JWT `sandbox_id` matches the request context; the OCSF event `reason:middleware_denied:metamynd-stub:stub_deny`; and authenticated `Describe` and `ValidateConfig` calls from the gateway.
+6. On exit, always deletes the sandbox, removes `gateway.toml`, restarts the gateway on its defaults, and stops the stub.
+
+Facts this relies on (OpenShell v0.1.2):
+- Supervisor containers use host networking, so `127.0.0.1:50051` is reachable from the gateway and from every sandbox supervisor.
+- JWT signing is enabled by default on a local `.deb` install. The token issuer is `openshell-gateway:openshell`.
+- The gateway won't start if a registered middleware fails `Describe`. That is why the script owns `gateway.toml` and restores it.
+
+### Result: 29 Sep 2026 on COO-JASIM-NB1 (step 0.4 passed, spike S2 closed)
+
+All seven checks passed:
+
+1. The stub listened on `127.0.0.1:50051` over TLS with the POC private CA.
+2. The gateway restarted with `metamynd-stub` registered.
+3. The gateway called `Describe` with a JWT that verified (`caller_kind=gateway`).
+4. The gateway called `ValidateConfig` when the sandbox was created with the middleware policy.
+5. The POST from the sandbox got a **403** with the body `{"error":"middleware_denied","middleware":"metamynd-stub","reason_code":"stub_deny","layer":"l7","policy":"github",…}`.
+6. The stub received an authenticated `EvaluateHttpRequest`:
+
+   ```json
+   {"rpc":"EvaluateHttpRequest","auth":"ok","request_id":"8a0056ee-…","sandbox_id":"159bd5a3-…",
+    "token_sandbox_id":"159bd5a3-…","sandbox":"m0-stub-8562","method":"POST","host":"api.github.com",
+    "port":443,"path":"/markdown","body_bytes":13,"reason_code":"stub_deny"}
+   ```
+7. OCSF logged `HTTP:POST [MED] DENIED … [policy:github engine:middleware] [failed:false transformed:false reason:middleware_denied:metamynd-stub:stub_deny]`.
+
+The gateway was restored to its default config afterwards.
+
+What this confirms for the design:
+- Supervisors reach a host-bound middleware at `127.0.0.1` over TLS, and the gateway ships the pinned CA to them. Spike S2 is closed; no container or bridge networking is needed.
+- The per-call JWT carries a gateway-attested `sandbox_id` that matches `RequestContext.sandbox_id`. This is the identity binding design §6.1 depends on.
+- `request_id` is a UUID that the middleware sees, but it does **not** appear in the OCSF line. Correlation needs the adapter's journal, as design §7 assumes.
+- The middleware receives the full request body (`body_bytes: 13`) before credentials are injected.
+- The OCSF denial reason has the form `middleware_denied:<policy map key>:<reason_code>`.
+
+npm reports that `protobufjs`'s postinstall script is not in `allowScripts`. It is skipped, and gRPC works without it.
