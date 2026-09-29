@@ -52,6 +52,7 @@ cleanup() {
 trap cleanup EXIT
 
 [[ -e "$cfg" ]] && die "$cfg already exists; this script only manages a gateway.toml it creates. Move it aside and re-run."
+openshell profile lint -f deploy/openshell/m0-purchasing-profile.yaml >/dev/null || die "provider profile lint (run: openshell profile lint -f deploy/openshell/m0-purchasing-profile.yaml)"
 
 echo "== certificates, sandbox image"
 bash tools/gen-middleware-certs.sh >/dev/null || die "certificate generation"
