@@ -36,6 +36,19 @@ attempt() {
   [[ -z "$reason" ]] && reason=$(error_of "$R")
   CODE="$(status_of "$R")/${reason:-}"
   DELTA=$(( $(ledger_count) - before ))
+  # OpenShell drops in-flight requests with an empty reply when the supervisor reloads (runbook M4).
+  # The adapter's decision is still in its journal; use it, visibly, if it is from the last 30 s.
+  if [[ "$CODE" == 000/* ]]; then
+    local sid jr
+    sid=$(sandbox_id "$1") && jr=$(journal_recent_os "$sid") && [[ -n "$jr" ]] && {
+      note "empty reply from OpenShell; the adapter's journaled decision was $jr"
+      CODE="403/$jr"
+    }
+  fi
+}
+# journal_recent_os <sandboxId>: the OpenShell reason code of the sandbox's latest request if journaled within 30 s
+journal_recent_os() {
+  cat state/journal/*.jsonl 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=s.split("\n").filter(Boolean).map(JSON.parse).filter(x=>x.kind==="request"&&x.sandboxId===process.argv[1]).at(-1);if(r&&Date.now()-Date.parse(r.ts)<30000&&r.osReasonCode)console.log(r.osReasonCode)})' "$1"
 }
 # exec_probe <sandbox> <shell command>: runs an arbitrary command in the sandbox, prints its output
 exec_probe() { openshell sandbox exec -n "$1" --no-tty -- sh -c "$2" 2>&1; }
@@ -100,7 +113,9 @@ row R12 "WebSocket upgrade on a denied purchase" '[0-9]{3}/.*' "$CODE" "$DELTA"
 
 echo "== concurrency (5 per sandbox)"
 before=$(ledger_count)
-burst() { openshell sandbox exec -n "$1" --no-tty --env "MERCHANT=$2" -- sh -c 'for i in 1 2 3 4 5; do curl -sS -m 20 -o /dev/null -w "%{http_code}\n" -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $PURCHASING_TOKEN" --data-binary "{\"amount\":1,\"currency\":\"MYR\",\"merchant\":\"$MERCHANT\"}" https://host.openshell.internal:8443/purchase-requests & done; wait' 2>/dev/null; }
+# The merchant is a positional argument, not `exec --env`: on v0.1.2 an exec --env appears to change the
+# sandbox's provider environment, and the supervisor reload drops every in-flight L7 tunnel (runbook M4).
+burst() { openshell sandbox exec -n "$1" --no-tty -- sh -c 'for i in 1 2 3 4 5; do curl -sS -m 20 -o /dev/null -w "%{http_code}\n" -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $PURCHASING_TOKEN" --data-binary "{\"amount\":1,\"currency\":\"MYR\",\"merchant\":\"$1\"}" https://host.openshell.internal:8443/purchase-requests & done; wait' sh "$2" 2>/dev/null; }
 burst "$sb_a" OfficeMart > state/m4-burst-a.txt & pa=$!
 burst "$sb_b" PaperCo > state/m4-burst-b.txt & pb=$!
 wait "$pa" "$pb"

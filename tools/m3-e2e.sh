@@ -148,8 +148,9 @@ printf 'note  behavioural control: agent A RM100 after a RM1 history -> %s %s (j
 echo "== concurrency: $concurrent parallel purchases from each sandbox through one adapter"
 before=$(ledger_count)
 burst() { # <sandbox> <merchant>
-  openshell sandbox exec -n "$1" --no-tty --env "MERCHANT=$2" --env "N=$concurrent" -- sh -c \
-    'i=0; while [ $i -lt $N ]; do curl -sS -o /dev/null -w "%{http_code}\n" -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $PURCHASING_TOKEN" --data-binary "{\"amount\":1,\"currency\":\"MYR\",\"merchant\":\"$MERCHANT\"}" https://host.openshell.internal:8443/purchase-requests & i=$((i+1)); done; wait'
+  # Positional arguments, not `exec --env` (an --env change reloads the supervisor and drops in-flight tunnels).
+  openshell sandbox exec -n "$1" --no-tty -- sh -c \
+    'i=0; while [ $i -lt $2 ]; do curl -sS -o /dev/null -w "%{http_code}\n" -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $PURCHASING_TOKEN" --data-binary "{\"amount\":1,\"currency\":\"MYR\",\"merchant\":\"$1\"}" https://host.openshell.internal:8443/purchase-requests & i=$((i+1)); done; wait' sh "$2" "$concurrent"
 }
 burst "$sb_a" OfficeMart > state/m3-burst-a.txt 2>&1 &
 pid_a=$!
