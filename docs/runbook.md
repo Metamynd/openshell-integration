@@ -39,3 +39,21 @@ bash tools/m0-smoke.sh
 ```
 
 The default workload image (`nvcr.io/nvidia/base/ubuntu:24.04`) has no `curl`, and OpenShell v0.1.2 no longer builds images from a Dockerfile passed to `--from`. So the script first builds `deploy/images/smoke` with Docker as `mm-poc-smoke:0.1`. It then creates a throwaway sandbox from that image with `deploy/openshell/m0-smoke-policy.yaml`. That policy allows only GET to `api.github.com`, with `enforcement: enforce`. The script then runs a GET, which should return 200, and a POST, which should return 403 because the L7 rules deny it. It saves the sandbox log to `docs/report/runs/m0-smoke-sandbox.log` and deletes the sandbox.
+
+Sandbox logs reach the gateway asynchronously, so the script polls for the denial event rather than reading the log once.
+
+### Result: 29 Sep 2026 on COO-JASIM-NB1 (step 0.3 passed)
+
+- `GET https://api.github.com/zen` → **200**. OCSF: `HTTP:GET [INFO] ALLOWED … [policy:github_read engine:l7]`.
+- `POST https://api.github.com/markdown` → **403**. The body is OpenShell's, not GitHub's:
+
+  ```json
+  {"error":"policy_denied","layer":"l7","policy":"github_read","method":"POST","path":"/markdown",
+   "detail":"POST /markdown not permitted by policy","binary":"/usr/bin/curl", …}
+  ```
+- OCSF: `HTTP:POST [MED] DENIED POST http://api.github.com:443/markdown [policy:github_read engine:l7] [reason:L7_REQUEST deny …]`.
+
+What this shows for the design:
+- L7 enforcement works with `enforcement: enforce` on this host.
+- The L4 and L7 decisions are logged separately: `NET:OPEN … engine:opa`, then `HTTP:<method> … engine:l7`.
+- The deny body includes the policy name and binary, which will sit alongside the middleware-denial body (`error: middleware_denied`) once the adapter is attached.
