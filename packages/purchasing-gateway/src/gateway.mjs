@@ -102,7 +102,8 @@ export function createPurchasingServer({ gateway, bearerToken, tls, log = () => 
     if (result.governance?.decision) headers['x-agentsafe-decision'] = result.governance.decision;
     log({ method: req.method, path: req.url, status: result.status, decision: result.governance?.decision,
       reasonCode: result.governance?.reasonCode ?? result.body?.reasonCode, authorizationId: result.governance?.authorizationId,
-      ms: Date.now() - started });
+      // The guard's own diagnostic for GUARD_ERROR / GOVERNANCE_ERROR (e.g. an issuer call that failed); never request content.
+      error: result.governance?.error ?? result.body?.error, ms: Date.now() - started });
     res.writeHead(result.status, headers);
     if (result.rawBody) res.end(result.rawBody);
     else res.end(typeof result.body === 'string' ? result.body : JSON.stringify(result.body ?? {}));
