@@ -149,7 +149,7 @@ ttl_secs = 900
 
 [[openshell.supervisor.middleware]]
 name              = "metamynd"
-grpc_endpoint     = "https://host.openshell.internal:50051"
+grpc_endpoint     = "https://127.0.0.1:50051"
 tls_ca_cert_path  = "/etc/openshell/certs/metamynd-poc-ca.pem"
 audience          = "urn:openshell:extension:middleware:metamynd"
 max_payload_bytes = 1048576
@@ -164,7 +164,7 @@ version: 1
 network_policies:
   purchasing:
     endpoints:
-      - host: purchasing.poc.internal
+      - host: host.openshell.internal
         port: 8443
         protocol: rest
         enforcement: enforce
@@ -180,19 +180,19 @@ network_middlewares:
     order: 2147483647          # always last; the stretch interceptor enforces this
     on_error: fail_closed
     config: { routes: "purchasing-v1", mode: "enforce" }
-    endpoints: { include: ["purchasing.poc.internal"] }
+    endpoints: { include: ["host.openshell.internal"] }
 ```
 
 ```json
 // packages/adapter/routes/purchasing-v1.json
 [
-  { "host": "purchasing.poc.internal", "port": 8443, "method": "POST", "path": "/purchase-requests",
+  { "host": "host.openshell.internal", "port": 8443, "method": "POST", "path": "/purchase-requests",
     "action": "office_supplies.purchase",
     "valueFields": ["amount", "currency", "merchant"],
     "allowedFields": ["amount", "currency", "merchant", "items", "note"],
     "riskLevel": "low",
     "resourceFrom": null },
-  { "host": "purchasing.poc.internal", "port": 8443, "method": "GET", "path": "/purchase-requests/*",
+  { "host": "host.openshell.internal", "port": 8443, "method": "GET", "path": "/purchase-requests/*",
     "action": null }
 ]
 ```
@@ -349,7 +349,7 @@ Steps 1–6 are the same as §5.1. The gate returns 403 `{decision: block, reaso
 | Threat | Mitigation | Residual |
 | --- | --- | --- |
 | The agent forges its identity via header or body | Identity comes only from the JWT-attested `sandbox_id` → registry | None known |
-| The agent reaches the API without the middleware | Kernel egress capture. The API host is reachable only through `purchasing.poc.internal:8443`. The purchasing gateway demands a claimable `authorizationId` | Policy-hygiene rules (no `tls: skip`, `protocol: tcp` or hostless `allowed_ips`) are checked by a lint script and the stretch interceptor |
+| The agent reaches the API without the middleware | Kernel egress capture. The API host is reachable only through `host.openshell.internal:8443`. The purchasing gateway demands a claimable `authorizationId` | Policy-hygiene rules (no `tls: skip`, `protocol: tcp` or hostless `allowed_ips`) are checked by a lint script and the stretch interceptor |
 | A later middleware stage rewrites the body | The adapter is the highest `order`. `payloadDigest` is bound and re-checked by the purchasing gateway | A policy author can reorder stages. The claim then fails closed |
 | A captured `x-magp-request` is replayed | The claim is single-use (`AUTHORIZATION_ALREADY_CLAIMED`) and the nonce is single-use at the gate | None |
 | A stolen gateway JWT is replayed to the adapter | TLS to the adapter; tokens live ≤ 15 min; the adapter listens only on the WSL host interface | Bearer token with no channel binding (upstream feature request) |
@@ -377,10 +377,10 @@ The join keys, in order:
 | --- | --- | --- | --- |
 | MetaMynd | Hosted, `https://metamynd.ai/api/v1` | 443 | Dedicated POC tenant with testnet agents. MetaMynd holds the Hedera operator account; nothing in the POC talks to Hedera directly |
 | OpenShell gateway | WSL2 (installer, systemd user service) | 17670 (mTLS) | Pinned `OPENSHELL_VERSION=v0.1.2` |
-| Adapter | WSL2 host process, user `mmadapter` | 50051 (TLS) | Reached by supervisors as `host.openshell.internal:50051` |
+| Adapter | WSL2 host process, user `mmadapter` | 50051 (TLS) | Bound to `127.0.0.1:50051`. Supervisors use host networking, and the gateway does not resolve `host.openshell.internal`, so the registration uses the IP (spike S2) |
 | Signer daemons | WSL2, user `mmadapter` | UNIX sockets in `state/signers/` | One per DID |
 | Watcher | WSL2 host process | none | mTLS bundle from `~/.config/openshell/gateways/<name>/mtls/` |
-| Purchasing gateway | WSL2 docker network | 8443 (TLS) | Addressed as `purchasing.poc.internal` (spike S3) |
+| Purchasing gateway | WSL2 host process, `127.0.0.1:8443` | 8443 (TLS) | Addressed as `host.openshell.internal`, the only policy host OpenShell pins to loopback. Its certificate is from the POC CA, with SAN `DNS:host.openshell.internal`. Supervisors trust that CA through the derived image `local/openshell-supervisor:0.1.2-pca` (spike S3) |
 | Mock purchasing API | Same docker network | 8080 (HTTP, internal only) | |
 | Sandboxes A, B | OpenShell docker driver | none | Custom agent image; provider `purchasing-api` |
 
@@ -421,9 +421,9 @@ CI runs unit and contract tests on every PR. System tests run manually on the WS
 
 | ID | Question | Default if unresolved |
 | --- | --- | --- |
-| S1 | Does the WSL2 kernel pass OpenShell's Landlock ABI 3 and seccomp checks? | Move to an Ubuntu VM or cloud host |
-| S2 | Can supervisors (Docker driver) reach `host.openshell.internal:50051` on WSL2, and does TLS with a private CA work? | Run the adapter in a container on the gateway's Docker network |
-| S3 | How does the supervisor trust the purchasing gateway's private CA? Upstream roots come from the **supervisor image's** system bundle. | Build a derived `supervisor:v0.1.2` image with the POC CA; else serve the purchasing gateway over plain HTTP on port 80, and record that TLS was not exercised |
+| S1 | Does the WSL2 kernel pass OpenShell's Landlock ABI 3 and seccomp checks? | **Closed:** kernel 6.18 with Landlock ABI 7 passes (runbook step 0.2) |
+| S2 | Can supervisors (Docker driver) reach a host-local middleware, and does TLS with a private CA work? | **Closed:** `https://127.0.0.1:50051` works for both the gateway and supervisors, and the gateway ships the pinned CA (runbook step 0.4) |
+| S3 | How does the supervisor trust the purchasing gateway's private CA? Upstream roots come from the **supervisor image's** system bundle. | **Closed:** a derived `local/openshell-supervisor:0.1.2-pca` image (stock bundle + POC CA), set through `[openshell.drivers.docker] supervisor_image`, verifies `host.openshell.internal:8443`. Plain HTTP also works as a fallback (runbook step 0.5) |
 | S4 | Does `agentsafe-http-gateway` accept the adapter-built `x-magp-request` unchanged (the `authorizationId` field, the context-signature default)? | Build the header with `metamynd-client`'s `SignedRequest.headers()` shape |
 | S5 | What is the MetaMynd authorize latency from the POC host? It drives the middleware timeout. | **Closed:** allow p95 1.57 s against metamynd.ai; timeout set to 5 s, with a 4 s gate deadline (§5.3) |
-| S6 | Can a provider placeholder in `Authorization` reach the purchasing gateway intact after substitution while `x-magp-request` survives? | Carry the upstream credential through the Credential Vault instead (`resolveCredential`) |
+| S6 | Can a provider placeholder in `Authorization` reach the purchasing gateway intact after substitution while `x-magp-request` survives? | **Half closed:** substitution of a bound bearer placeholder is proven (runbook step 0.5). Whether `x-magp-request` survives is checked in M3. Fallback: carry the upstream credential through the Credential Vault (`resolveCredential`) |
