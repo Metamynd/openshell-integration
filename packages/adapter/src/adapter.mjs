@@ -10,7 +10,48 @@ import { ExtensionAuthError } from './jwt.mjs';
 import { REASON, isValidReasonCode, mapMetaMyndReason } from './reasons.mjs';
 import { matchRoute } from './routes.mjs';
 
-export const ADAPTER_VERSION = '0.1.0-m2';
+export const ADAPTER_VERSION = '0.2.0-m3';
+
+/**
+ * HttpResponsePreReturn handler (design §3.1 `response`): evidence only. At preflight it
+ * journals the upstream status against the request_id, then skips the stage. It never blocks
+ * a response and never settles anything: OpenShell does not call it when the upstream fails,
+ * so settlement stays with the purchasing gateway.
+ * @param {object} opts
+ * @param {((authorization: unknown) => import('./jwt.mjs').ExtensionClaims) | null} opts.verifyToken
+ * @param {{ append(entry: Record<string, unknown>): unknown }} opts.journal
+ * @param {(entry: Record<string, unknown>) => void} [opts.log]
+ */
+export function createResponseHandlers({ verifyToken, journal, log = () => {} }) {
+  return {
+    /** @param {any} call bidirectional stream of HttpResponseEvent / HttpResponseEventResult */
+    Evaluate(call) {
+      let trusted = !verifyToken;
+      if (verifyToken) {
+        try {
+          const claims = verifyToken(call.metadata.get('authorization')[0]);
+          trusted = claims.caller_kind === 'supervisor';
+        } catch (err) {
+          log({ rpc: 'HttpResponsePreReturn', auth: err instanceof ExtensionAuthError ? err.code : 'error' });
+        }
+      }
+      call.on('data', (/** @type {any} */ event) => {
+        if (!event?.preflight) return; // body/trailers never follow a skip; session_end needs no reply
+        const ctx = event.preflight.context ?? {};
+        if (trusted) {
+          try {
+            journal.append({ kind: 'response', requestId: ctx.request_id, sandboxId: ctx.sandbox_id, statusCode: event.preflight.status_code });
+          } catch (err) {
+            log({ event: 'journal_write_failed', error: String(/** @type {Error} */ (err).message) });
+          }
+        }
+        call.write({ preflight_result: { skip: {} } });
+      });
+      call.on('end', () => call.end());
+      call.on('error', () => {});
+    },
+  };
+}
 
 /** @param {number} code @param {string} details */
 const rpcError = (code, details) => Object.assign(new Error(details), { code, details });
@@ -37,9 +78,10 @@ const rpcError = (code, details) => Object.assign(new Error(details), { code, de
  * @param {{ append(entry: Record<string, unknown>): unknown }} opts.journal
  * @param {((ctx: { binding: import('./registry.mjs').Binding, route: import('./routes.mjs').Route, canon: any, requestContext: any }) => Promise<Verdict>) | null} opts.gate
  *   null until the allow path is built (M3): every governed request is then denied
+ * @param {boolean} [opts.responseBinding] advertise HTTP_RESPONSE/PRE_RETURN (serve createResponseHandlers too)
  * @param {(entry: Record<string, unknown>) => void} [opts.log]
  */
-export function createAdapterHandlers({ verifyToken, audience, maxPayloadBytes, routeSets, registry, journal, gate, log = () => {} }) {
+export function createAdapterHandlers({ verifyToken, audience, maxPayloadBytes, routeSets, registry, journal, gate, responseBinding = false, log = () => {} }) {
   /** @param {any} call @param {Array<'gateway' | 'supervisor'>} allowed */
   function authenticate(call, allowed) {
     if (!verifyToken) return null;
@@ -147,7 +189,7 @@ export function createAdapterHandlers({ verifyToken, audience, maxPayloadBytes, 
         log({ rpc: 'Describe', caller: claims?.caller_kind ?? 'unauthenticated', refused });
         if (refused) return callback(rpcError(grpc.status.FAILED_PRECONDITION, refused));
         callback(null, buildManifest({ name: 'metamynd/openshell-adapter', version: ADAPTER_VERSION,
-          expectedAudience: verifyToken ? audience : '', maxPayloadBytes }));
+          expectedAudience: verifyToken ? audience : '', maxPayloadBytes, responseBinding }));
       } catch (err) {
         callback(authStatus(err));
       }
