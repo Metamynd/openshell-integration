@@ -57,3 +57,23 @@ What this shows for the design:
 - L7 enforcement works with `enforcement: enforce` on this host.
 - The L4 and L7 decisions are logged separately: `NET:OPEN … engine:opa`, then `HTTP:<method> … engine:l7`.
 - The deny body includes the policy name and binary, which will sit alongside the middleware-denial body (`error: middleware_denied`) once the adapter is attached.
+
+## M0 stub middleware (build plan step 0.4, spike S2)
+
+```shell
+bash tools/m0-stub.sh
+```
+
+The script performs these steps:
+
+1. Generates a private CA and a server certificate for `127.0.0.1` in `state/certs/`.
+2. Starts the stub (`packages/adapter/src/stub-main.mjs`) on `127.0.0.1:50051` over TLS. The stub checks the gateway's Ed25519 JWT against `~/.local/state/openshell/tls/jwt/public.pem`.
+3. Registers the stub by writing `~/.config/openshell/gateway.toml` and restarting the `openshell-gateway` user service.
+4. Creates a sandbox with `deploy/openshell/m0-stub-policy.yaml`. That policy's L7 rules *allow* `POST /markdown`, so a denial of that request can only come from the middleware.
+5. Checks four things: a 403 `middleware_denied` response with `reason_code: stub_deny`; an authenticated `EvaluateHttpRequest` in the stub log whose JWT `sandbox_id` matches the request context; the OCSF event `reason:middleware_denied:metamynd-stub:stub_deny`; and authenticated `Describe` and `ValidateConfig` calls from the gateway.
+6. On exit, always deletes the sandbox, removes `gateway.toml`, restarts the gateway on its defaults, and stops the stub.
+
+Facts this relies on (OpenShell v0.1.2):
+- Supervisor containers use host networking, so `127.0.0.1:50051` is reachable from the gateway and from every sandbox supervisor.
+- JWT signing is enabled by default on a local `.deb` install. The token issuer is `openshell-gateway:openshell`.
+- The gateway won't start if a registered middleware fails `Describe`. That is why the script owns `gateway.toml` and restores it.
