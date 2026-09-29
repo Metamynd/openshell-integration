@@ -43,9 +43,10 @@ for body in '{"amount":1,"currency":"MYR","merchant":"PaperCo","note":"evidence 
   r=$(buy "$sb_b" "$body"); echo "   B $(status_of "$r") $(reason_of "$r")"
 done
 
-echo "== collecting OpenShell logs; waiting 75 s for MetaMynd's evidence batch to anchor"
-for sb in "$sb_a" "$sb_b"; do openshell logs "$sb" --source sandbox -n 5000 > "docs/report/runs/m5-evidence-$sb.log" 2>&1; done
+echo "== waiting 75 s for MetaMynd's evidence batch to anchor, then collecting OpenShell logs"
 sleep 75
+# Collected after the wait: sandbox logs reach the gateway asynchronously, so an immediate read can miss the last events.
+for sb in "$sb_a" "$sb_b"; do openshell logs "$sb" --source sandbox -n 5000 > "docs/report/runs/m5-evidence-$sb.log" 2>&1; done
 
 echo "== joining"
 LEDGER_TOKEN=$(cat state/ledger-token) node packages/poc-cli/bin/evidence.mjs --since "$since" \

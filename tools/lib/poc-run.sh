@@ -91,7 +91,8 @@ buy() {
 }
 status_of() { tail -n1 <<<"$1"; }
 body_of()   { sed '$d' <<<"$1"; }
-reason_of() { body_of "$1" | grep -o '"reason_code":"[^"]*"' | cut -d'"' -f4; }
+# OpenShell's denial body uses reason_code; the purchasing gateway's refusal body uses reasonCode.
+reason_of() { body_of "$1" | grep -oE '"reason_?[cC]ode":"[^"]*"' | head -n1 | cut -d'"' -f4; }
 error_of()  { body_of "$1" | grep -o '"error":"[^"]*"' | head -n1 | cut -d'"' -f4; }
 
 # journal_last <sandboxId>: "<decision> <reasonCode> <agentDid>" of the sandbox's latest journaled request
