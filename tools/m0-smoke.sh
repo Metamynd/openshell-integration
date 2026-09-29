@@ -30,10 +30,23 @@ get=$(code https://api.github.com/zen)
 [[ "$get" == 200 ]] && echo "ok    GET  api.github.com/zen -> $get" || { echo "FAIL  GET  api.github.com/zen -> ${get:-no response} (want 200)"; fail=1; }
 
 post=$(code -X POST -H 'Content-Type: application/json' -d '{"text":"hi"}' https://api.github.com/markdown)
-[[ "$post" == 403 ]] && echo "ok    POST api.github.com/markdown -> $post (denied by L7)" || { echo "FAIL  POST api.github.com/markdown -> ${post:-no response} (want 403)"; fail=1; }
+[[ "$post" == 403 ]] && echo "ok    POST api.github.com/markdown -> $post" || { echo "FAIL  POST api.github.com/markdown -> ${post:-no response} (want 403)"; fail=1; }
 
-echo "== sandbox log excerpt -> $log"
-timeout 10 openshell logs "$name" --source sandbox > "$log" 2>&1 || true
-grep -E 'HTTP|L7|DENIED|ALLOWED' "$log" | tail -n 10 || true
+# Evidence that the 403 came from OpenShell, not GitHub: the response body...
+echo "== POST response body"
+openshell sandbox exec -n "$name" --no-tty -- curl -sS -X POST -H 'Content-Type: application/json' \
+  -d '{"text":"hi"}' https://api.github.com/markdown | head -c 600; echo
+
+# ...and the supervisor's L7 denial event. Logs reach the gateway asynchronously, so poll.
+echo "== waiting for the L7 denial event (up to 30s) -> $log"
+denied=""
+for _ in $(seq 1 15); do
+  openshell logs "$name" --source sandbox -n 500 > "$log" 2>&1 || true
+  denied=$(grep -E 'HTTP:POST.*DENIED' "$log" | tail -n 1)
+  [[ -n "$denied" ]] && break
+  sleep 2
+done
+grep -E 'HTTP:|NET:OPEN' "$log" | tail -n 10 || true
+[[ -n "$denied" ]] && echo "ok    L7 denial logged" || { echo "FAIL  no HTTP:POST DENIED event in the sandbox log"; fail=1; }
 
 exit "$fail"
