@@ -4,7 +4,7 @@
 //   node packages/adapter/bin/bindings.mjs list
 // Env: ADAPTER_REGISTRY (state/bindings.json)
 import { readFileSync } from 'node:fs';
-import { readBindings, writeRegistry } from '../src/registry.mjs';
+import { readBindings, revokeBinding, writeRegistry } from '../src/registry.mjs';
 
 const path = process.env.ADAPTER_REGISTRY ?? 'state/bindings.json';
 const [cmd, ...args] = process.argv.slice(2);
@@ -24,11 +24,8 @@ if (cmd === 'bind' && args.length === 3) {
   writeRegistry(path, [...bindings.filter((b) => b.sandboxId !== id), next]);
   console.log(`ok    bound ${id} (${sandboxName}) -> agent ${agentKey} ${agent.agentDid} (generation ${next.generation})`);
 } else if (cmd === 'revoke' && args.length === 1) {
-  const id = args[0].toLowerCase();
-  const b = bindings.find((x) => x.sandboxId === id);
-  if (!b) throw new Error(`no binding for ${id}`);
-  writeRegistry(path, bindings.map((x) => (x.sandboxId === id ? { ...x, status: 'revoked', generation: x.generation + 1, revokedAt: new Date().toISOString() } : x)));
-  console.log(`ok    revoked ${id}`);
+  if (!revokeBinding(path, args[0])) throw new Error(`no binding for ${args[0]}`);
+  console.log(`ok    revoked ${args[0].toLowerCase()}`);
 } else if (cmd === 'list') {
   for (const b of bindings) console.log(`${b.status.padEnd(8)} ${b.sandboxId}  ${b.sandboxName.padEnd(20)} agent ${b.agentKey}  gen ${b.generation}`);
 } else {
