@@ -437,3 +437,18 @@ The change landed 0.78 s after the burst's `openshell sandbox exec --env MERCHAN
 - **Availability impact.** Any config or provider change to a sandbox aborts its in-flight requests. With a MetaMynd round trip of about 1–3 s, the window is wide.
 - **Upstream feature request.** Let in-flight L7 requests finish, or give them a retryable 503, when only the provider environment changed, instead of closing tunnels with no response.
 - **Matrix handling.** When OpenShell drops a single request, the matrix uses the adapter's decision from its journal if the entry is under 30 s old, and says so in a `note` line.
+
+### Result: 29 Sep 2026 on COO-JASIM-NB1 (M4 passed in both modes)
+
+**Every matrix row passed, in both `enforcing` and `verify-only`** (sandboxes `d096608d…` and `d1fbdcb8…` enforcing; `169d4471…` and `cb1b6b59…` verify-only):
+- Policy lint was clean for every sandbox, and the adapter was the last stage (order 1000).
+- R1 executed once. R2–R4 were denied by cap and merchant rules.
+- R5 and R6: identity forgery through the body or a forged `x-magp-request` was judged as the sandbox's own agent and denied.
+- R7–R12: shell `/dev/tcp`, IP literal, the direct API port, an L7-disallowed method, gzip and a WebSocket upgrade were all blocked, with no ledger rows.
+- R13: in every burst the ledger delta equalled the 201s exactly.
+- R14–R16: adapter down → `middleware_failed`; MetaMynd unreachable → `metamynd_gate_unreachable`; purchasing gateway down → no row.
+- R17 and R18: the watcher revoked the deleted sandbox's binding, and the recreated sandbox (new UUID, same name) got `metamynd_binding_unknown`.
+
+**In `verify-only`, where the purchasing gateway did no MetaMynd checks, OpenShell plus the adapter alone blocked every attack.**
+
+**Availability under bursts (reported, not a security failure).** Burst availability was 10/10, 0/10 and 4/10 across three runs. Each lossy run logged exactly 5 `policy generation is stale` tunnel drops, one sandbox's whole burst. So provider-environment reloads also happen without `exec --env`. Every dropped request was refused before inspection or forwarding. None executed, and their holds were unclaimed and lapsed.
