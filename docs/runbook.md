@@ -460,3 +460,7 @@ The working explanation is that a sandbox reloads its provider environment once,
 The matrix now adds R13a: B makes one allowed purchase, then waits 8 s before the burst. The note after R13a reports how many stale-generation drops occurred around that first credential use.
 
 Upstream report candidate: *"The first provider-credential use in a sandbox triggers a provider-environment reload that closes every in-flight L7 tunnel with an empty reply (`policy_changed:false`)."*
+
+**Confirmed, 29 Sep 2026 (verify-only, sandboxes `8315f7f6…` and `151d7aef…`).** With R13a warming up B's credential and an 8 s pause, **every row passed and the burst was 10/10**, compared with 0/10 and 4/10 without the warm-up. The warm-up request itself completed before its reload landed (0 stale drops). So the loss comes from OpenShell's one-time reload after a sandbox's first credential use, not from load or from the adapter.
+
+Operational implication: until this is fixed upstream, a newly started sandbox's first burst of requests can be dropped (fail-closed). A deployment can warm each sandbox with one request after start.
