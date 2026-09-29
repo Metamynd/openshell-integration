@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Re-vendor the OpenShell middleware protos at the pinned commit and verify
-# them against versions.lock. Usage: tools/sync-protos.sh [--check]
+# them against versions.lock. Usage: bash tools/sync-protos.sh [--check]
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
