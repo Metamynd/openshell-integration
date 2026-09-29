@@ -316,3 +316,39 @@ Adapter modules: `describe` (negotiation), `jwt` (gateway token verification), `
 - OCSF logged 7 `middleware_denied:metamynd:*` events.
 - The journal holds 7 decisions for the sandbox and no header values or bodies.
 - The purchasing gateway received no requests.
+
+## M3: governed purchase through OpenShell (build plan tasks 3.1–3.6)
+
+```shell
+bash tools/m3-e2e.sh
+```
+
+The adapter now runs with the allow path on (`ADAPTER_GATE=on`, `packages/adapter/src/gate.mjs`). For a canonicalised request from a bound sandbox it acts as the bound agent:
+1. It calls `agentsafe-guard` `authorize` at metamynd.ai with the agent's daemon-held key. The request carries:
+   - `context.riskLevel` from the route;
+   - `trace.workflowId = sandbox_id` and `trace.parentActionId = request_id`;
+   - the parsed body as the bound payload.
+2. On a permit it builds a fresh signed request with the `authorizationId` and writes it as the `x-magp-request` header mutation.
+3. OpenShell then substitutes the `poc-purchasing` provider's bearer token.
+4. The purchasing gateway re-verifies, claims, forwards and captures.
+
+The response hook journals the upstream status against the `request_id`, for evidence only.
+
+The script:
+- starts the stack and the adapter;
+- registers the adapter with its request and response bindings;
+- imports the endpointless `poc-purchasing-gw` profile and creates the `poc-purchasing` provider with the token in `state/purchasing-api-token`;
+- creates sandboxes A and B with `deploy/openshell/m3-policy.yaml` and binds each UUID to its agent.
+
+It then checks:
+- the sandbox holds only a placeholder for the purchasing token;
+- **A buys RM100 at OfficeMart → 201, and exactly one ledger row is written**;
+- **B's identical request → 403 `metamynd_merchant_not_allowed`**;
+- B's own PaperCo purchase → 201;
+- A at RM600 → `metamynd_sop_spend_cap`, and A at RM350 → `metamynd_escalation_pending`;
+- `M3_CONCURRENT` (default 10) parallel RM1 purchases from each sandbox all succeed, and the ledger grows by exactly that many;
+- the journal shows no cross-attribution: sandbox A's decisions are all agent A and sandbox B's all agent B;
+- every allowed decision has an `authorizationId` and a joined 201 response record;
+- the purchasing token never appears in the adapter's journal or log.
+
+On exit it always deletes the sandboxes, provider and profile, revokes the bindings, restores the gateway, and stops everything.

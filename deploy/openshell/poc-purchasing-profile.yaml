@@ -1,0 +1,14 @@
+# Endpointless provider profile for the purchasing gateway's upstream bearer token. The token
+# binds only through the sandbox policy's credential_binding; the sandbox sees a placeholder and
+# OpenShell substitutes the real value after the middleware chain.
+id: poc-purchasing-gw
+display_name: POC purchasing gateway
+description: Bearer token the POC purchasing gateway requires before any governance
+category: other
+credentials:
+  - name: api_token
+    description: Bearer token for the POC purchasing gateway
+    env_vars: [PURCHASING_TOKEN]
+    required: true
+    auth_style: bearer
+    header_name: authorization
