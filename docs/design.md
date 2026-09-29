@@ -2,7 +2,7 @@
 
 **Status:** Draft 1 · 29 September 2026
 **Scope reference:** [POC scope v0.3](../MetaMynd_OpenShell_Integration_POC_Scope_v0.3.md)
-**Pinned versions:** OpenShell `v0.1.2` (`6648bd0c`). MetaMynd packages `@metamynd/agentsafe-guard@0.17.x`, `@metamynd/agentsafe-http-gateway@0.15.x`, `@metamynd/agentsafe-mcp-guard@0.17.x` and `@metamynd/agentsafe-signer@0.19.x`, plus the MetaMynd backend at the commit recorded in `versions.lock`.
+**Pinned versions:** OpenShell `v0.1.2` (`6648bd0c`). MetaMynd packages `@metamynd/agentsafe-guard@0.17.x`, `@metamynd/agentsafe-http-gateway@0.15.x`, `@metamynd/agentsafe-mcp-guard@0.17.x` and `@metamynd/agentsafe-signer@0.19.x`, plus the hosted MetaMynd service at `https://metamynd.ai` (release recorded in `versions.lock`).
 
 ## 1. Goals and non-goals
 
@@ -39,7 +39,7 @@ flowchart LR
     W["Revocation watcher"]
     PG["Purchasing gateway<br/>agentsafe-http-gateway :8443"]
     API["Mock purchasing API<br/>+ ledger"]
-    MM["MetaMynd backend :9926<br/>+ Postgres"]
+    MM["MetaMynd (hosted)<br/>https://metamynd.ai"]
     EV["Evidence joiner (CLI)"]
   end
   SA -- "HTTPS via supervisor" --> PG
@@ -366,7 +366,7 @@ The join keys, in order:
 
 | Process | Where | Port / socket | Notes |
 | --- | --- | --- | --- |
-| MetaMynd backend + Postgres | WSL2 (docker compose) | 9926, 15432 | Hedera testnet operator; `EVIDENCE_ANCHOR_MODE=sync`, `EVIDENCE_ANCHOR=none` unless anchoring is being demoed |
+| MetaMynd | Hosted, `https://metamynd.ai/api/v1` | 443 | Dedicated POC tenant with testnet agents. MetaMynd holds the Hedera operator account; nothing in the POC talks to Hedera directly |
 | OpenShell gateway | WSL2 (installer, systemd user service) | 17670 (mTLS) | Pinned `OPENSHELL_VERSION=v0.1.2` |
 | Adapter | WSL2 host process, user `mmadapter` | 50051 (TLS) | Reached by supervisors as `host.openshell.internal:50051` |
 | Signer daemons | WSL2, user `mmadapter` | UNIX sockets in `state/signers/` | One per DID |

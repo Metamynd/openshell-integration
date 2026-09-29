@@ -24,6 +24,11 @@
       "commit": "ba2c819052c6503c744404ece0bf43a36894e905",
       "note": "main after AgentSafe PR #785 (gate fixes)"
     },
+    "service": {
+      "apiBase": "https://metamynd.ai/api/v1",
+      "release": "v1.71.0",
+      "note": "hosted instance the POC targets; v1.71.0 contains #785. MetaMynd holds the Hedera operator account."
+    },
     "packages": {
       "@metamynd/agentsafe-guard": "0.17.x",
       "@metamynd/agentsafe-http-gateway": "0.15.x",
