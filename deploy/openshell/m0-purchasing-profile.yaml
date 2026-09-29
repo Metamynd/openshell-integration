@@ -10,3 +10,4 @@ credentials:
     env_vars: [PURCHASING_TOKEN]
     required: true
     auth_style: bearer
+    header_name: authorization
