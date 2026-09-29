@@ -1,0 +1,25 @@
+# M0 smoke policy (build plan step 0.3). It proves L7 enforcement on an unmodified
+# sandbox before any middleware exists. curl may GET api.github.com; any POST is
+# denied by the L7 rules. enforcement is set explicitly: the default is audit,
+# which only logs.
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only: [/bin, /usr, /lib, /proc, /dev/urandom, /app, /etc, /var/log]
+  read_write: [/sandbox, /tmp, /dev/null]
+landlock:
+  compatibility: best_effort
+
+network_policies:
+  github_read:
+    name: github-api-get-only
+    endpoints:
+      - host: api.github.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/bin/curl }
