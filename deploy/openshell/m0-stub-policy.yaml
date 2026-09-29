@@ -1,0 +1,32 @@
+# M0 stub policy (build plan step 0.4). The L7 rules allow POST /markdown, so any
+# denial of that request comes from the attached middleware, not from L7.
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only: [/bin, /usr, /lib, /proc, /dev/urandom, /app, /etc, /var/log]
+  read_write: [/sandbox, /tmp, /dev/null]
+landlock:
+  compatibility: best_effort
+
+network_policies:
+  github:
+    name: github-api
+    endpoints:
+      - host: api.github.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: /markdown }
+    binaries:
+      - { path: /usr/bin/curl }
+
+network_middlewares:
+  metamynd-stub:
+    middleware: metamynd-stub
+    order: 10
+    on_error: fail_closed
+    endpoints:
+      include: ["api.github.com"]
