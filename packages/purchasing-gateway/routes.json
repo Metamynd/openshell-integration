@@ -1,0 +1,11 @@
+[
+  {
+    "method": "POST",
+    "path": "/purchase-requests",
+    "action": "office_supplies.purchase",
+    "valueFields": ["amount", "currency", "merchant"],
+    "allowedFields": ["amount", "currency", "merchant", "items", "note"],
+    "requirePayloadBinding": true,
+    "requireContextSignature": true
+  }
+]
