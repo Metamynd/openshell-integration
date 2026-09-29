@@ -2,7 +2,7 @@
 
 **Status:** Draft 1 · 29 September 2026
 **Scope reference:** [POC scope v0.3](../MetaMynd_OpenShell_Integration_POC_Scope_v0.3.md)
-**Pinned versions:** OpenShell `v0.1.2` (`6648bd0c`). MetaMynd packages `@metamynd/agentsafe-guard@0.17.x`, `@metamynd/agentsafe-http-gateway@0.15.x`, `@metamynd/agentsafe-mcp-guard@0.17.x` and `@metamynd/agentsafe-signer@0.19.x`, plus the MetaMynd backend at the commit recorded in `versions.lock`.
+**Pinned versions:** OpenShell `v0.1.2` (`6648bd0c`). MetaMynd packages `@metamynd/agentsafe-guard@0.17.x`, `@metamynd/agentsafe-http-gateway@0.15.x`, `@metamynd/agentsafe-mcp-guard@0.17.x` and `@metamynd/agentsafe-signer@0.19.x`, plus the hosted MetaMynd service at `https://metamynd.ai` (release recorded in `versions.lock`).
 
 ## 1. Goals and non-goals
 
@@ -39,7 +39,7 @@ flowchart LR
     W["Revocation watcher"]
     PG["Purchasing gateway<br/>agentsafe-http-gateway :8443"]
     API["Mock purchasing API<br/>+ ledger"]
-    MM["MetaMynd backend :9926<br/>+ Postgres"]
+    MM["MetaMynd (hosted)<br/>https://metamynd.ai"]
     EV["Evidence joiner (CLI)"]
   end
   SA -- "HTTPS via supervisor" --> PG
@@ -76,7 +76,7 @@ A Node.js 22 (ESM) gRPC server that implements two services from the pinned prot
 | `binding` | `sandbox_id` → `Binding` lookup from the registry (§4.4). A missing, revoked or generation-mismatched binding is denied. |
 | `route` | Matches `(host, port, method, path)` to a route from `routes.json` (§4.2), deny-by-default. Returns the pinned `action` and the field rules. |
 | `canon` | Rejects any request `content-encoding`, a non-JSON `content-type`, oversize bodies and duplicate or conflicting headers. Parses the body with the gateway's `parseStrictJson`, enforces `allowedFields` and `valueFields`, and extracts `{amount, currency, merchant, resource}`. |
-| `signer` | One cached `agentsafe-guard` instance per binding, created with `createGuard({ api, agentDid, keyProvider: 'daemon', daemonSocketPath })`. It calls `buildSignedRequest({ action, amount, currency, merchant, resource, context, trace, payload })` with `payload` = the parsed body, which produces `payloadDigest`/`payloadSignature` and `envelopeSignature`. |
+| `signer` | One cached `agentsafe-guard` instance per binding, created with `createGuard({ api, agentDid, keyProvider: 'daemon', daemonSocketPath })`. It calls `buildSignedRequest({ action, amount, currency, merchant, resource, context, trace, payload })` with `payload` = the parsed body and `context` = `{ riskLevel }` taken from the matched route (§4.2). That call produces `payloadDigest`/`payloadSignature` and `envelopeSignature`. |
 | `gate` | `POST {MM_API}/policy/mandate/authorize` with the signed request and a hard deadline (§5.3). It classifies the response into `Verdict {permit, decision, reasonCode, authorizationId, eventId, escalationId, envelopeId}`. Only HTTP 200 with `allow` or `observe` is a permit. |
 | `decide` | Builds `HttpRequestResult`. A permit gives `ALLOW` plus a header mutation `x-magp-request` (overwrite) = JSON of `{...signed, authorizationId}`. Anything else gives `DENY` plus a mapped `reason_code` (§4.5). It never replaces the body. |
 | `response` | `HttpResponsePreReturn.Evaluate`: at preflight it records `status_code` against `request_id` and returns `skip`. It never blocks. It ignores later events. |
@@ -153,7 +153,7 @@ grpc_endpoint     = "https://host.openshell.internal:50051"
 tls_ca_cert_path  = "/etc/openshell/certs/metamynd-poc-ca.pem"
 audience          = "urn:openshell:extension:middleware:metamynd"
 max_payload_bytes = 1048576
-timeout           = "3s"
+timeout           = "5s"
 ```
 
 ### 4.2 Sandbox policy and adapter routes
@@ -190,6 +190,7 @@ network_middlewares:
     "action": "office_supplies.purchase",
     "valueFields": ["amount", "currency", "merchant"],
     "allowedFields": ["amount", "currency", "merchant", "items", "note"],
+    "riskLevel": "low",
     "resourceFrom": null },
   { "host": "purchasing.poc.internal", "port": 8443, "method": "GET", "path": "/purchase-requests/*",
     "action": null }
@@ -197,6 +198,12 @@ network_middlewares:
 ```
 
 A route with `"action": null` is read-only: the adapter allows it without calling MetaMynd and journals it as `passthrough`. An unmatched `(host, port, method, path)` is denied with `metamynd_route_not_allowed`.
+
+Every governed route must set `riskLevel` (`low` | `medium` | `high` | `critical`). The adapter sends it as `context.riskLevel`, and the agent's request can never supply it.
+
+This is required because metamynd.ai enforces the EU AI Act Standard, whose risk rule escalates any request without a well-formed `riskLevel` as `CONTEXT_UNVERIFIABLE`. Spike S5 observed this on production: all 20 allowed-class probes escalated until the field was added.
+
+The value is signed by `envelopeSignature`. At the gate its provenance is still "agent claim", because the adapter signs as the agent, so an owner who wants a hard floor sets the mandate's `riskTier`.
 
 ### 4.3 Policy `config` Struct (validated by `ValidateConfig`)
 
@@ -308,8 +315,10 @@ Steps 1–6 are the same as §5.1. The gate returns 403 `{decision: block, reaso
 
 ### 5.3 Deadlines and failure handling
 
-- The registration `timeout` is 3 s. The adapter's internal budget is 2.5 s, split as: sign ≤ 300 ms, gate ≤ 2 s, and the remainder for canonicalisation and response.
-- If the adapter exceeds 3 s, OpenShell applies `fail_closed`.
+- The registration `timeout` is 5 s. The adapter's internal budget is 4.5 s, split as: sign ≤ 300 ms, gate ≤ 4 s, and the remainder for canonicalisation and response.
+  - Spike S5 measured the path from COO-JASIM-NB1 to metamynd.ai: allow p50 1.21 s, p95 1.57 s, max 1.57 s; deny p50 0.41 s, p95 0.93 s.
+  - The 4 s gate deadline is about 2.5 times the observed allow p95.
+- If the adapter exceeds 5 s, OpenShell applies `fail_closed`.
 - Every exception, non-200 gate response, verdict without a recognised shape or signer error maps to a deny code (§4.5). The adapter never returns `ALLOW` from an error path. This is enforced by a single `decide(verdict)` function with exhaustive tests.
 - **Orphaned holds:** an allowed request can mint a hold that never reaches the purchasing gateway. This happens when a later stage denies it, the sandbox disconnects, or the upstream fails before the claim. An unclaimed hold lapses after 15 min and consumes cap until then. The optional sweeper (M4) voids unclaimed holds older than 60 s. If a void races a late claim, the claim is refused and the purchase fails closed.
 
@@ -366,7 +375,7 @@ The join keys, in order:
 
 | Process | Where | Port / socket | Notes |
 | --- | --- | --- | --- |
-| MetaMynd backend + Postgres | WSL2 (docker compose) | 9926, 15432 | Hedera testnet operator; `EVIDENCE_ANCHOR_MODE=sync`, `EVIDENCE_ANCHOR=none` unless anchoring is being demoed |
+| MetaMynd | Hosted, `https://metamynd.ai/api/v1` | 443 | Dedicated POC tenant with testnet agents. MetaMynd holds the Hedera operator account; nothing in the POC talks to Hedera directly |
 | OpenShell gateway | WSL2 (installer, systemd user service) | 17670 (mTLS) | Pinned `OPENSHELL_VERSION=v0.1.2` |
 | Adapter | WSL2 host process, user `mmadapter` | 50051 (TLS) | Reached by supervisors as `host.openshell.internal:50051` |
 | Signer daemons | WSL2, user `mmadapter` | UNIX sockets in `state/signers/` | One per DID |
@@ -416,5 +425,5 @@ CI runs unit and contract tests on every PR. System tests run manually on the WS
 | S2 | Can supervisors (Docker driver) reach `host.openshell.internal:50051` on WSL2, and does TLS with a private CA work? | Run the adapter in a container on the gateway's Docker network |
 | S3 | How does the supervisor trust the purchasing gateway's private CA? Upstream roots come from the **supervisor image's** system bundle. | Build a derived `supervisor:v0.1.2` image with the POC CA; else serve the purchasing gateway over plain HTTP on port 80, and record that TLS was not exercised |
 | S4 | Does `agentsafe-http-gateway` accept the adapter-built `x-magp-request` unchanged (the `authorizationId` field, the context-signature default)? | Build the header with `metamynd-client`'s `SignedRequest.headers()` shape |
-| S5 | What is the MetaMynd authorize latency locally (with sync anchoring off)? It drives the 3 s timeout. | Raise to 5 s and note it |
+| S5 | What is the MetaMynd authorize latency from the POC host? It drives the middleware timeout. | **Closed:** allow p95 1.57 s against metamynd.ai; timeout set to 5 s, with a 4 s gate deadline (§5.3) |
 | S6 | Can a provider placeholder in `Authorization` reach the purchasing gateway intact after substitution while `x-magp-request` survives? | Carry the upstream credential through the Credential Vault instead (`resolveCredential`) |
