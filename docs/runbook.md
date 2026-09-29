@@ -464,3 +464,53 @@ Upstream report candidate: *"The first provider-credential use in a sandbox trig
 **Confirmed, 29 Sep 2026 (verify-only, sandboxes `8315f7f6…` and `151d7aef…`).** With R13a warming up B's credential and an 8 s pause, **every row passed and the burst was 10/10**, compared with 0/10 and 4/10 without the warm-up. The warm-up request itself completed before its reload landed (0 stale drops). So the loss comes from OpenShell's one-time reload after a sandbox's first credential use, not from load or from the adapter.
 
 Operational implication: until this is fixed upstream, a newly started sandbox's first burst of requests can be dropped (fail-closed). A deployment can warm each sandbox with one request after start.
+
+## M5: evidence and performance (build plan tasks 5.1, 5.2)
+
+```shell
+bash tools/m5-evidence.sh
+PERF_N=100 bash tools/m5-perf.sh
+```
+
+**Evidence (`tools/m5-evidence.sh`).** The script makes a known set of decisions through OpenShell: two allowed A purchases, A over its cap, A needing approval, one allowed B purchase, and B at A's merchant. It waits 75 s for MetaMynd's evidence batch to anchor. `packages/poc-cli/bin/evidence.mjs` then joins every decision across four sources:
+1. **OpenShell OCSF:** the sandbox and a time window, since OCSF carries no `request_id`. A denial must also show `middleware_denied:metamynd:<code>`.
+2. **The adapter journal:** `request_id`, agent, `authorizationId`, MetaMynd `eventId`.
+3. **MetaMynd:** `GET /evidence/:eventId` (decision digest, anchoring), then the trust-graph evidence path, then the public Merkle inclusion proof.
+4. **The ledger:** `Idempotency-Key = authorizationId`. An allowed purchase that returned 201 has exactly one row, and everything else has none.
+
+Output: `docs/report/runs/m5-evidence.{json,md}`.
+
+**Performance (`tools/m5-perf.sh`).** `PERF_N` sequential RM1 purchases per path, measured end to end by the client:
+
+| Path | Route |
+| --- | --- |
+| (a) openshell-only | sandbox → OpenShell (L4, TLS, L7, credential) → purchasing gateway without MetaMynd checks |
+| (b) metamynd-only | agent A → metamynd.ai authorize → enforcing purchasing gateway (no OpenShell) |
+| (c) combined | sandbox → OpenShell → MetaMynd adapter → enforcing purchasing gateway |
+
+Each sandbox is warmed up first, because of OpenShell's reload after first credential use. Output: `docs/report/runs/m5-perf.json` with p50, p95, p99, mean, max and status counts.
+
+### Result: latency, 29 Sep 2026 from COO-JASIM-NB1 (100 sequential RM1 purchases per path, all 201)
+
+| Path | p50 | p95 | p99 | mean | max |
+| --- | --- | --- | --- | --- | --- |
+| (a) OpenShell only | 47 ms | 75 ms | 80 ms | 50 ms | 87 ms |
+| (b) MetaMynd only | 2873 ms | 3547 ms | 5302 ms | 2965 ms | 5527 ms |
+| (c) combined | 3024 ms | 3775 ms | 4256 ms | 3092 ms | 4598 ms |
+
+Findings:
+- **OpenShell adds about 50 ms.** The combined path costs roughly the sum of the other two: 47 + 2873 ≈ 2920 ms against 3024 ms measured, so the adapter's own overhead is about 100 ms.
+- **The cost is MetaMynd round trips.** Each purchase makes three sequential calls from the POC host to metamynd.ai: the adapter's `authorize`, then the purchasing gateway's claim (`effect/dispatching`) and `capture`. Each takes about 1 s from Malaysia.
+- **The adapter's own budget holds.** Only `authorize` sits inside the 5 s middleware timeout; claim and capture happen after OpenShell forwards.
+- **Where to reduce it:** a MetaMynd region closer to the workload, a faster permit path (see the M0 S5 note), and settling the capture asynchronously. The upstream response does not depend on the capture.
+- Evidence run 1 (same session): **all 6 decisions joined in MetaMynd**, with the evidence record, trust-graph path and anchored Merkle proof for each, and the ledger was consistent for all 6. OCSF joined 5 of 6: the last denial's OCSF line had not reached the gateway yet when the logs were read immediately after it. The script now reads the logs after the 75 s anchoring wait.
+
+### Result: evidence, 29 Sep 2026 (task 5.1 passed)
+
+All six decisions joined across all four sources:
+- **OpenShell OCSF:** 6/6, with each denial matched on `middleware_denied:metamynd:<code>`.
+- **The adapter journal.**
+- **MetaMynd:** 6/6 each for the evidence record, the trust-graph evidence path, and the anchored Merkle inclusion proof.
+- **The ledger:** 6/6 consistent. The three allowed purchases each have exactly one row keyed by their `authorizationId`; the cap, escalation and wrong-merchant decisions have none.
+
+The join from OCSF to the journal uses the sandbox plus a time window, because OpenShell's OCSF events carry no `request_id`. That is an upstream request.
