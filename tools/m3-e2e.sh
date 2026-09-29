@@ -32,6 +32,11 @@ bad() { printf 'FAIL  %s\n' "$1"; fail=1; }
 die() { printf 'FAIL  %s\n' "$1"; exit 1; }
 
 cleanup() {
+  # Keep OpenShell's side of the story (OCSF, middleware decisions, relay errors) before the sandboxes go.
+  openshell logs "$sb_a" --source sandbox -n 5000 > "$out/m3-e2e-sandbox-a.log" 2>&1 || true
+  openshell logs "$sb_b" --source sandbox -n 5000 > "$out/m3-e2e-sandbox-b.log" 2>&1 || true
+  cp "$adapter_log" "$out/m3-e2e-adapter.log" 2>/dev/null || true
+  cp state/logs/gateway.log "$out/m3-e2e-gateway.log" 2>/dev/null || true
   openshell sandbox delete "$sb_a" >/dev/null 2>&1 || true
   openshell sandbox delete "$sb_b" >/dev/null 2>&1 || true
   for s in "$sid_a" "$sid_b"; do [[ -n "$s" ]] && node packages/adapter/bin/bindings.mjs revoke "$s" >/dev/null 2>&1; done
@@ -104,7 +109,8 @@ echo "== governed purchases through OpenShell"
 before=$(ledger_count)
 r=$(buy "$sb_a" '{"amount":100,"currency":"MYR","merchant":"OfficeMart","items":[{"sku":"A4-PAPER","qty":10}]}')
 echo "   A RM100 OfficeMart -> $(status_of "$r") $(body_of "$r" | head -c 200)"
-[[ $(status_of "$r") == 201 ]] && ok "agent A's purchase executed (201 from the purchasing API)" || bad "agent A's purchase -> $(status_of "$r")"
+[[ $(status_of "$r") == 201 ]] && ok "agent A's purchase executed (201 from the purchasing API)" \
+  || bad "agent A's purchase -> $(status_of "$r") $(body_of "$r" | grep -o '"reason_code":"[^"]*"' | cut -d'"' -f4) (journal: $(journal_last "$sid_a"))"
 after=$(ledger_count)
 (( after == before + 1 )) && ok "exactly one ledger row was written" || bad "ledger changed by $((after - before)) (want 1)"
 
