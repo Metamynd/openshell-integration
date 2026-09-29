@@ -186,3 +186,54 @@ Findings:
 - A permit costs about 800 ms more than a deny. The permit path also inserts the hold, anchors the decision to the ledger, and signs the Action Passport. This is worth raising with the MetaMynd team as a performance item.
 - The design's middleware timeout goes from 3 s to **5 s**, with a 4 s gate deadline.
 - **`riskLevel` is required.** metamynd.ai enforces the EU AI Act Standard, whose risk rule escalates any request without a well-formed `riskLevel` (`CONTEXT_UNVERIFIABLE`). The first probe run sent none and escalated all 20 allowed calls; those escalations are pending in the POC tenant's review queue and expire after 24 h. The adapter now takes `riskLevel` from operator route config (design §4.2).
+
+## M1: MetaMynd side without OpenShell (build plan tasks 1.1–1.4)
+
+### One-time: signer passphrase
+
+Add a third line to `.env.poc`. It is the passphrase that encrypts the agent and gateway keys held by the `agentsafe-signer` daemons in `state/signers/`. There is no keychain or TPM backend on a normal WSL user, so the passphrase backend is pinned with `--kek-backend passphrase`.
+
+```shell
+AGENTSAFE_SIGNER_PASSPHRASE=<long random passphrase>
+```
+
+### Enrolment (task 1.3, run once)
+
+```shell
+bash tools/m1-enrol.sh
+```
+
+The script is idempotent:
+- It starts a signer daemon for `agentA`, `agentB` and `gw`, each with a one-shot admin socket, and generates each Ed25519 key inside its daemon. Keys never leave the daemons.
+- It onboards two **testnet BYOK** agents through `POST /onboarding/agent` and proves key possession with `sign-key-control-challenge` → `POST /agent-identity/:id/verify-key`:
+  - **Agent A:** `office_supplies.purchase`, MYR, per transaction ≤ RM500, merchant `OfficeMart`, payload binding required. Its SOP blocks an unknown amount and anything over RM500, escalates over RM300, and escalates high risk.
+  - **Agent B:** same scope, per transaction ≤ RM200, merchant `PaperCo`, with the default SOP.
+- The cumulative budget for each agent is RM20,000. It never resets, so it is sized for many runs.
+- It derives the gateway's `did:key` from its daemon key and registers it through `POST /policy/counterparties` for `OfficeMart` and `PaperCo`. **This switches the POC tenant to registered-counterparty-only claims.**
+
+The results go to `state/enrolment.json` and `state/agents/{A,B}.json`, both mode 0600 and gitignored.
+
+### Stack (task 1.2)
+
+```shell
+bash tools/poc-stack.sh up        # or: down | status
+```
+
+This starts three things:
+- the signer daemons, now bound to their DIDs;
+- the mock purchasing API on `127.0.0.1:18080`, with its ledger in `state/purchasing-ledger.sqlite`;
+- the purchasing gateway on `https://127.0.0.1:8443`, with the POC CA certificate and SAN `host.openshell.internal`.
+
+The gateway is `agentsafe-http-gateway` plus `agentsafe-mcp-guard`, with the service key held in its daemon and settings `denyByDefault`, `requireAuthorization`, `requirePayloadBinding` and `requireContextSignature`. Before any governance it requires `Authorization: Bearer <state/purchasing-api-token>`; that is the token OpenShell will substitute from the provider in M3. Logs go to `state/logs/`.
+
+### Native baseline (task 1.4)
+
+```shell
+bash tools/m1-native.sh
+```
+
+It brings the stack up, runs the scenarios with no OpenShell in the path, and brings the stack down. Each purchase is authorized at metamynd.ai with the agent's daemon-held key and `context.riskLevel: low`. The client then sends a freshly signed request plus the `authorizationId` to the gateway in `x-magp-request`, the same pattern as `create-metamynd-agent`.
+
+The scenarios check allow, over-cap, wrong merchant, escalation over RM300, agent B's rules, replay of an allowed request, body tampering, a missing upstream bearer, and a request with no governance. Each scenario asserts the gate verdict, the gateway status and the ledger delta. Results go to `docs/report/runs/m1-native.json`.
+
+The RM350 scenario leaves an escalation in the tenant's review queue. It expires after 24 h.
