@@ -18,7 +18,7 @@ This is a scoping document, not a claim of an existing partnership, endorsement,
 ## Getting started
 
 ```sh
-tools/host-preflight.sh   # on the WSL2 or Linux host that will run OpenShell
+bash tools/host-preflight.sh   # on the WSL2 or Linux host that will run OpenShell
 npm ci
 npm run check             # lint, tsc --checkJs, node:test
 ```

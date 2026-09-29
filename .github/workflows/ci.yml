@@ -27,6 +27,6 @@ jobs:
         with:
           node-version: 22
       - name: Vendored protos match the pinned OpenShell commit
-        run: tools/sync-protos.sh --check
+        run: bash tools/sync-protos.sh --check
       - name: Shell scripts parse
         run: for f in tools/*.sh; do bash -n "$f"; done
