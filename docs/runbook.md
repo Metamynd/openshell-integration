@@ -452,3 +452,11 @@ The change landed 0.78 s after the burst's `openshell sandbox exec --env MERCHAN
 **In `verify-only`, where the purchasing gateway did no MetaMynd checks, OpenShell plus the adapter alone blocked every attack.**
 
 **Availability under bursts (reported, not a security failure).** Burst availability was 10/10, 0/10 and 4/10 across three runs. Each lossy run logged exactly 5 `policy generation is stale` tunnel drops, one sandbox's whole burst. So provider-environment reloads also happen without `exec --env`. Every dropped request was refused before inspection or forwarding. None executed, and their holds were unclaimed and lapsed.
+
+**What triggers the reload without `--env`.** Sandbox logs from both lossy runs show exactly **one** `provider_env_changed:true` reload per sandbox. In both, it landed about 1–2 s after that sandbox's *first allowed request* started. For sandbox B, that first allowed request was the burst itself; B's earlier R4 was denied, so the provider credential was never resolved.
+
+The working explanation is that a sandbox reloads its provider environment once, shortly after its provider credential is first used, and that reload drops whatever is in flight. This also explains M3, where each sandbox made one purchase before its burst and most bursts survived.
+
+The matrix now adds R13a: B makes one allowed purchase, then waits 8 s before the burst. The note after R13a reports how many stale-generation drops occurred around that first credential use.
+
+Upstream report candidate: *"The first provider-credential use in a sandbox triggers a provider-environment reload that closes every in-flight L7 tunnel with an empty reply (`policy_changed:false`)."*
