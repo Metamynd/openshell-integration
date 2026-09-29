@@ -28,7 +28,8 @@ row() {
 }
 # attempt <sandbox> <json> [curl args]: sets R (response), CODE ("<status>/<reason or error>"), DELTA
 attempt() {
-  local before
+  local before started
+  started=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
   before=$(ledger_count)
   R=$(buy "$@")
   local reason
@@ -37,18 +38,35 @@ attempt() {
   CODE="$(status_of "$R")/${reason:-}"
   DELTA=$(( $(ledger_count) - before ))
   # OpenShell drops in-flight requests with an empty reply when the supervisor reloads (runbook M4).
-  # The adapter's decision is still in its journal; use it, visibly, if it is from the last 30 s.
+  # The adapter's decision is still in its journal; use it, visibly, if THIS attempt reached the adapter.
   if [[ "$CODE" == 000/* ]]; then
     local sid jr
-    sid=$(sandbox_id "$1") && jr=$(journal_recent_os "$sid") && [[ -n "$jr" ]] && {
-      note "empty reply from OpenShell; the adapter's journaled decision was $jr"
+    sid=$(sandbox_id "$1") && jr=$(journal_os_since "$sid" "$started") && [[ -n "$jr" ]] && {
+      note "empty reply from OpenShell; the adapter's journaled decision for this attempt was $jr"
       CODE="403/$jr"
     }
   fi
 }
-# journal_recent_os <sandboxId>: the OpenShell reason code of the sandbox's latest request if journaled within 30 s
-journal_recent_os() {
-  cat state/journal/*.jsonl 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=s.split("\n").filter(Boolean).map(JSON.parse).filter(x=>x.kind==="request"&&x.sandboxId===process.argv[1]).at(-1);if(r&&Date.now()-Date.parse(r.ts)<30000&&r.osReasonCode)console.log(r.osReasonCode)})' "$1"
+# journal_os_since <sandboxId> <iso-ts>: OpenShell reason code of the sandbox's latest request journaled after <iso-ts>
+journal_os_since() {
+  cat state/journal/*.jsonl 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=s.split("\n").filter(Boolean).map(JSON.parse).filter(x=>x.kind==="request"&&x.sandboxId===process.argv[1]&&x.ts>=process.argv[2]).at(-1);if(r&&r.osReasonCode)console.log(r.osReasonCode)})' "$1" "$2"
+}
+# attempt_allow: like attempt, but retries (up to 2 more times) when the refusal is an availability
+# failure (MetaMynd unreachable/slow), which fails closed and is reported separately from security.
+attempt_allow() {
+  local n
+  for n in 1 2 3; do
+    attempt "$@"
+    [[ "$CODE" =~ ^403/metamynd_(unavailable|gate_unreachable)$ ]] || return 0
+    note "availability: attempt $n refused with ${CODE#403/} (fail-closed, ledger +$DELTA); retrying"
+    sleep 2
+  done
+}
+# stale_drops: OpenShell "policy generation is stale" tunnel drops in both sandboxes' logs so far
+stale_drops() {
+  local n=0 sb
+  for sb in "$sb_a" "$sb_b"; do n=$(( n + $(openshell logs "$sb" --source sandbox -n 5000 2>/dev/null | grep -c 'policy generation is stale' || true) )); done
+  echo "$n"
 }
 # exec_probe <sandbox> <shell command>: runs an arbitrary command in the sandbox, prints its output
 exec_probe() { openshell sandbox exec -n "$1" --no-tty -- sh -c "$2" 2>&1; }
@@ -78,7 +96,7 @@ for sb in "$sb_a" "$sb_b"; do
 done
 
 echo "== governed purchases"
-attempt "$sb_a" '{"amount":1,"currency":"MYR","merchant":"OfficeMart"}'
+attempt_allow "$sb_a" '{"amount":1,"currency":"MYR","merchant":"OfficeMart"}'
 row R1 "A buys RM1 at OfficeMart" '201/' "$CODE" "$DELTA" 1
 attempt "$sb_a" '{"amount":600,"currency":"MYR","merchant":"OfficeMart"}'
 row R2 "A over its RM500 cap" '403/metamynd_sop_spend_cap' "$CODE" "$DELTA"
@@ -98,13 +116,13 @@ echo "== bypass attempts"
 out=$(exec_probe "$sb_a" 'exec 3<>/dev/tcp/host.openshell.internal/8443 && echo CONNECTED || echo REFUSED')
 [[ "$out" != *CONNECTED* ]] && ok "R7 raw TCP from a shell (/dev/tcp, binary not in policy) is refused" || bad "R7 raw TCP from a shell connected"
 before=$(ledger_count)
-out=$(exec_probe "$sb_a" 'curl -sS -m 10 -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" --data-binary "{\"amount\":1,\"currency\":\"MYR\",\"merchant\":\"OfficeMart\"}" https://127.0.0.1:8443/purchase-requests')
+out=$(exec_probe "$sb_a" 'curl -s -m 10 -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" --data-binary "{\"amount\":1,\"currency\":\"MYR\",\"merchant\":\"OfficeMart\"}" https://127.0.0.1:8443/purchase-requests')
 row R8 "curl to the gateway by IP literal" '000|403' "${out: -3}" "$(( $(ledger_count) - before ))"
 before=$(ledger_count)
-out=$(exec_probe "$sb_a" 'curl -sS -m 10 -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" --data-binary "{\"amount\":1,\"currency\":\"MYR\",\"merchant\":\"OfficeMart\"}" http://host.openshell.internal:18080/purchase-requests')
+out=$(exec_probe "$sb_a" 'curl -s -m 10 -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" --data-binary "{\"amount\":1,\"currency\":\"MYR\",\"merchant\":\"OfficeMart\"}" http://host.openshell.internal:18080/purchase-requests')
 row R9 "curl straight to the purchasing API port" '000|403' "${out: -3}" "$(( $(ledger_count) - before ))"
 before=$(ledger_count)
-out=$(exec_probe "$sb_a" 'curl -sS -m 10 -o /dev/null -w "%{http_code}" -X DELETE https://host.openshell.internal:8443/purchase-requests')
+out=$(exec_probe "$sb_a" 'curl -s -m 10 -o /dev/null -w "%{http_code}" -X DELETE https://host.openshell.internal:8443/purchase-requests')
 row R10 "a method the L7 policy does not allow" '403' "${out: -3}" "$(( $(ledger_count) - before ))"
 attempt "$sb_a" '{"amount":1,"currency":"MYR","merchant":"OfficeMart"}' -H 'Content-Encoding: gzip'
 row R11 "declared gzip body" '403/metamynd_request_rejected' "$CODE" "$DELTA"
@@ -120,10 +138,15 @@ burst "$sb_a" OfficeMart > state/m4-burst-a.txt & pa=$!
 burst "$sb_b" PaperCo > state/m4-burst-b.txt & pb=$!
 wait "$pa" "$pb"
 n201=$(cat state/m4-burst-a.txt state/m4-burst-b.txt | grep -c '^201$' || true)
-odd=$(cat state/m4-burst-a.txt state/m4-burst-b.txt | grep -vE '^(201|403|)$' | tr '\n' ' ' || true)
+n000=$(cat state/m4-burst-a.txt state/m4-burst-b.txt | grep -c '^000$' || true)
+odd=$(cat state/m4-burst-a.txt state/m4-burst-b.txt | grep -vE '^(201|403|000|)$' | tr '\n' ' ' || true)
 delta=$(( $(ledger_count) - before ))
-(( delta == n201 )) && [[ -z "$odd" ]] && ok "R13 burst: ledger +$delta equals the $n201 purchases that returned 201; all others 403" \
-  || bad "R13 burst: ledger +$delta vs $n201 × 201, unexpected: ${odd:-none}"
+# Safety (asserted): every executed purchase is exactly one ledger row; nothing else executed.
+(( delta == n201 )) && [[ -z "$odd" ]] && ok "R13 burst: ledger +$delta equals the $n201 purchases that returned 201; none of the rest executed" \
+  || bad "R13 burst: ledger +$delta vs $n201 × 201, unexpected statuses: ${odd:-none}"
+# Availability (reported): dropped connections, and whether OpenShell's stale-generation reload caused them.
+(( n201 == 10 )) && ok "R13 availability 10/10" \
+  || note "R13 availability $n201/10; $n000 dropped (empty reply); OpenShell stale-generation tunnel drops during the burst: $(( $(stale_drops) - drops_before ))"
 rm -f state/m4-burst-a.txt state/m4-burst-b.txt
 
 echo "== failures fail closed"
