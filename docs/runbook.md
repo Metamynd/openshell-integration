@@ -417,3 +417,23 @@ Deferred, and not in the matrix:
 - **4.4 and 4.5, escalation retry and the policy-integrity interceptor:** stretch goals.
 - **MetaMynd-side mandate revocation:** it would permanently revoke the enrolled agents. Binding revocation (R17, and M2) and containment are covered instead.
 - **A later middleware rewriting the body:** it needs a second middleware service. Body tampering is refused at the purchasing gateway (M1, `PAYLOAD_NOT_BOUND`).
+
+### Finding: OpenShell drops in-flight requests when a sandbox's provider environment reloads
+
+First M4 runs, 29 Sep 2026: in both matrix modes, all five of sandbox B's concurrent purchases got curl `(52) Empty reply from server`. The adapter had **allowed** each of them (1.7–2.7 s), but none reached the purchasing gateway. Sandbox B's OpenShell log shows why:
+
+```
+HTTP:POST [INFO] ALLOWED POST http://host.openshell.internal:8443/purchase-requests [policy:purchasing engine:l7]   (x5, then in the adapter)
+CONFIG:DETECTED Settings poll: config change detected [... policy_changed:false provider_env_changed:true]
+NET:OPEN [MED] DENIED host.openshell.internal:8443 [reason:L7 tunnel closed before inspection because policy changed:
+         policy generation is stale [captured_generation:2 current_generation:3]]   (x5)
+```
+
+When the supervisor sees a provider-environment change (`provider_env_changed:true`, even with `policy_changed:false`), it bumps the policy generation and closes every in-flight L7 tunnel. That includes requests whose middleware evaluation is still running. The client gets an empty reply, not a 403 or 503.
+
+The change landed 0.78 s after the burst's `openshell sandbox exec --env MERCHANT=…` session opened. Our test used `exec --env`, which apparently counts as a provider-environment change. The scripts now pass values as `sh -c` positional arguments instead.
+
+- **Safety held.** Nothing executed. The adapter's MetaMynd holds were unclaimed and lapse after 15 minutes.
+- **Availability impact.** Any config or provider change to a sandbox aborts its in-flight requests. With a MetaMynd round trip of about 1–3 s, the window is wide.
+- **Upstream feature request.** Let in-flight L7 requests finish, or give them a retryable 503, when only the provider environment changed, instead of closing tunnels with no response.
+- **Matrix handling.** When OpenShell drops a single request, the matrix uses the adapter's decision from its journal if the entry is under 30 s old, and says so in a `note` line.
