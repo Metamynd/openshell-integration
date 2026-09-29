@@ -129,6 +129,17 @@ row R11 "declared gzip body" '403/metamynd_request_rejected' "$CODE" "$DELTA"
 attempt "$sb_a" '{"amount":1,"currency":"MYR","merchant":"PaperCo"}' -H 'Connection: Upgrade' -H 'Upgrade: websocket'
 row R12 "WebSocket upgrade on a denied purchase" '[0-9]{3}/.*' "$CODE" "$DELTA"
 
+echo "== warm-up: first credential use in sandbox B"
+# Observed on v0.1.2: each sandbox reloads its provider environment once, shortly after its provider
+# credential is first used (provider_env_changed:true), and that reload drops every in-flight L7
+# tunnel. B's first allowed request would otherwise be the burst. One allowed purchase, then a pause
+# for the reload to land, keeps the burst measuring steady-state behaviour.
+drops_warm=$(stale_drops)
+attempt_allow "$sb_b" '{"amount":1,"currency":"MYR","merchant":"PaperCo"}'
+row R13a "B buys RM1 at PaperCo (first credential use)" '201/' "$CODE" "$DELTA" 1
+sleep 8
+note "stale-generation drops around B's first credential use: $(( $(stale_drops) - drops_warm ))"
+
 echo "== concurrency (5 per sandbox)"
 before=$(ledger_count)
 # The merchant is a positional argument, not `exec --env`: on v0.1.2 an exec --env appears to change the
