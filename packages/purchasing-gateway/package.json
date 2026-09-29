@@ -1,0 +1,1 @@
+{"name":"@metamynd/openshell-poc-purchasing-gateway","version":"0.0.0","private":true,"type":"module","engines":{"node":">=22.13"},"scripts":{"test":"node --test 'test/**/*.test.mjs'"},"license":"UNLICENSED","dependencies":{"@metamynd/agentsafe-http-gateway":"0.15.0","@metamynd/agentsafe-mcp-guard":"0.17.1"}}
