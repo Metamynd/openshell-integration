@@ -6,6 +6,7 @@
 //   PURCHASING_API_TOKEN (required; the bearer OpenShell substitutes from the provider)
 // Settlement: a 2xx upstream captures, 400/409/413/415/422 (the mock rejected it before any
 // effect) release, anything else is marked unknown.
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 // @ts-expect-error -- the @metamynd packages ship no type declarations
 import { createHttpGateway } from '@metamynd/agentsafe-http-gateway';
@@ -32,15 +33,22 @@ const guard = createMcpGuard({
   policyPublicKey: required('MM_POLICY_PUBLIC_KEY'),
   requireContextSignature: true,
 });
-const gateway = createHttpGateway({
-  guard,
-  routes,
-  forward: createForward(env.GW_UPSTREAM ?? 'http://127.0.0.1:18080'),
-  denyByDefault: true,
-  requirePayloadBinding: true,
-  requireContextSignature: true,
-  releaseOnStatus: [400, 409, 413, 415, 422],
-});
+const forward = createForward(env.GW_UPSTREAM ?? 'http://127.0.0.1:18080');
+// GW_MODE=verify-only (adversarial matrix run B only): no MetaMynd checks at all, just the bearer
+// check and forwarding, so the ledger shows exactly what OpenShell + the adapter let through.
+const verifyOnly = env.GW_MODE === 'verify-only';
+const gateway = verifyOnly
+  ? async (/** @type {any} */ req) => ({ ...(await forward({ ...req, headers: { ...req.headers, 'idempotency-key': randomUUID() } })), governance: { decision: 'unverified' } })
+  : createHttpGateway({
+    guard,
+    routes,
+    forward,
+    denyByDefault: true,
+    requirePayloadBinding: true,
+    requireContextSignature: true,
+    releaseOnStatus: [400, 409, 413, 415, 422],
+  });
+if (verifyOnly) process.stdout.write(`${JSON.stringify({ ts: new Date().toISOString(), event: 'WARNING_verify_only_mode', note: 'MetaMynd checks at the gateway are OFF' })}\n`);
 
 /** @param {Record<string, unknown>} entry */
 const log = (entry) => process.stdout.write(`${JSON.stringify({ ts: new Date().toISOString(), ...entry })}\n`);

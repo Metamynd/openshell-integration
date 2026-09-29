@@ -376,3 +376,44 @@ Findings from the four M3 runs:
 - **Availability under bursts depends on the network path to metamynd.ai.** All refusals under 20-way concurrency were `fetch failed`, meaning the HTTPS call from the POC host never completed. This affected both the adapter's authorize (`GATE_UNREACHABLE`) and the purchasing gateway's claim (`GUARD_ERROR`). The rate was about 10–15% of burst calls, and every one failed closed. One earlier run (run 3) dropped the whole burst after the adapter allowed it; its sandbox logs were not captured. The script now keeps them for M4.
 - **Latency: an allowed decision took 1.4–3.1 s** end to end at the adapter under a burst, inside the 4 s gate deadline.
 - **OpenShell once returned an empty reply instead of the 403 body** for an adapter denial. It was not reproduced in later runs. The request was still blocked and no ledger row was written.
+
+## M4: adversarial matrix (build plan tasks 4.1, 4.2, 4.6)
+
+```shell
+bash tools/m4-matrix.sh enforcing
+bash tools/m4-matrix.sh verify-only
+```
+
+`enforcing` is defence in depth: the purchasing gateway re-verifies, claims and settles. `verify-only` runs the purchasing gateway with `GW_MODE=verify-only`: it checks only the bearer and forwards everything. That run proves **OpenShell plus the adapter alone** block every attack. Every row asserts the outcome **and** the ledger delta.
+
+| Row | Attack or case | Expected |
+| --- | --- | --- |
+| R1 | A buys RM1 at OfficeMart | 201, ledger +1 |
+| R2 | A over its RM500 cap | `metamynd_sop_spend_cap` |
+| R3 | A at PaperCo | `metamynd_merchant_not_allowed` |
+| R4 | B sends A's allowed request | `metamynd_merchant_not_allowed` |
+| R5 | A puts agent B's DID in the body | `metamynd_request_rejected` |
+| R6 | A forges an `x-magp-request` as agent B | Judged as agent A (`metamynd_merchant_not_allowed`, journal shows A) |
+| R7 | Raw TCP from a shell (`/dev/tcp`) | Refused (binary not in policy) |
+| R8, R9 | Gateway by IP literal; the purchasing API port directly | Blocked at L4 |
+| R10 | Method not allowed by L7 | 403 |
+| R11 | Declared gzip body | `metamynd_request_rejected` |
+| R12 | WebSocket upgrade on a denied purchase | No ledger row |
+| R13 | 5 + 5 concurrent purchases | Ledger delta equals the 201s; everything else 403 |
+| R14 | Adapter down | 403 (`middleware_failed`), no ledger row |
+| R15 | MetaMynd unreachable | `metamynd_gate_unreachable` |
+| R16 | Purchasing gateway down after an allow (enforcing run only) | No ledger row; the hold lapses unclaimed |
+| R17 | Sandbox deleted | The watcher revokes its binding |
+| R18 | Recreated under the same name | New UUID, `metamynd_binding_unknown` |
+
+It also runs `tools/policy-lint.sh` against each sandbox's effective policy, checking for: `tls: skip`, `protocol: tcp`, `allowed_ips`, literal-IP hosts, `enforcement: audit`, `fail_open`, a missing adapter, or an adapter that is not the last stage.
+
+The revocation watcher (`packages/adapter/bin/watcher.mjs`) polls `openshell sandbox list -o json` every 2 s and revokes a binding after 2 consecutive misses. A failed poll never revokes anything.
+
+**Deviation from the design:** the watcher uses the CLI's mTLS credentials instead of a gRPC `ListSandboxes`/`WatchSandbox` client, so no OpenShell control-plane protos are vendored. The revocation lag is bounded by the poll interval.
+
+Deferred, and not in the matrix:
+- **4.3, cleanup of unclaimed holds:** MetaMynd already lapses unclaimed holds after 15 min.
+- **4.4 and 4.5, escalation retry and the policy-integrity interceptor:** stretch goals.
+- **MetaMynd-side mandate revocation:** it would permanently revoke the enrolled agents. Binding revocation (R17, and M2) and containment are covered instead.
+- **A later middleware rewriting the body:** it needs a second middleware service. Body tampering is refused at the purchasing gateway (M1, `PAYLOAD_NOT_BOUND`).

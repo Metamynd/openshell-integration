@@ -103,6 +103,21 @@ export function writeRegistry(path, bindings) {
   chmodSync(path, 0o600);
 }
 
+/**
+ * Revoke one binding (status revoked, generation bumped). Returns false when there is no such binding.
+ * @param {string} path
+ * @param {string} sandboxId
+ */
+export function revokeBinding(path, sandboxId) {
+  const id = sandboxId.toLowerCase();
+  const bindings = readBindings(path);
+  if (!bindings.some((b) => b.sandboxId === id)) return false;
+  writeRegistry(path, bindings.map((b) => (b.sandboxId === id && b.status === 'active'
+    ? { ...b, status: /** @type {const} */ ('revoked'), generation: b.generation + 1, revokedAt: new Date().toISOString() }
+    : b)));
+  return true;
+}
+
 /** @param {string} path @returns {Binding[]} */
 export function readBindings(path) {
   return existsSync(path) ? [...parseRegistry(JSON.parse(readFileSync(path, 'utf8'))).values()] : [];
