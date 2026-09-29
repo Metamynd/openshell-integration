@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Re-vendor the OpenShell middleware protos at the pinned commit and verify
-# them against versions.lock.json. Usage: scripts/sync-protos.sh [--check]
+# them against versions.lock. Usage: tools/sync-protos.sh [--check]
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-lock="$root/versions.lock.json"
-dest="$root/adapter/proto/openshell"
-repo="$(node -p "require('$lock').openshell.repo")"
-commit="$(node -p "require('$lock').openshell.commit")"
+lock="$root/versions.lock"
+dest="$root/proto/v0.1.2"
+pin() { node -e "const l=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).openshell; console.log(eval(process.argv[2]))" "$lock" "$1"; }
+repo="$(pin l.repo)"
+commit="$(pin l.commit)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -16,8 +17,8 @@ git -C "$tmp" fetch -q --depth 1 "$repo" "$commit"
 git -C "$tmp" checkout -q FETCH_HEAD
 
 status=0
-for rel in $(node -p "Object.keys(require('$lock').openshell.protos).join(' ')"); do
-  want="$(node -p "require('$lock').openshell.protos['$rel']")"
+for rel in $(pin "Object.keys(l.protos).join(' ')"); do
+  want="$(pin "l.protos['$rel']")"
   got="$(sha256sum "$tmp/$rel" | cut -d' ' -f1)"
   if [[ "$got" != "$want" ]]; then
     echo "upstream $rel at $commit does not match the lock ($got != $want)" >&2
