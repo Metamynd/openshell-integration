@@ -127,6 +127,16 @@ Facts this relies on (OpenShell v0.1.2, Docker driver):
 
 On exit the script always deletes the sandbox, the `m0-purchasing` provider and the `m0-purchasing-gw` profile. It removes `gateway.toml` and restarts the gateway on the stock supervisor image. The derived image stays in local Docker for reuse.
 
+### Result: 29 Sep 2026 on COO-JASIM-NB1 (step 0.5 passed, spike S3 closed, M0 complete)
+
+- `local/openshell-supervisor:0.1.2-pca` was built from the stock supervisor bundle plus the POC CA (151 roots), and the sandbox's supervisor ran it.
+- The sandbox env held only `PURCHASING_TOKEN=openshell:resolve:env:v…_PURCHASING_TOKEN`. The real token appeared nowhere in the sandbox environment.
+- `POST https://host.openshell.internal:8443/purchase-requests` reached the stand-in over the private-CA TLS hop with `auth_is_real_token: true`.
+- `POST http://host.openshell.internal:8081/purchase-requests` did the same (`auth_is_real_token: true`).
+- L7 enforcement held on the TLS path: `DELETE` got a 403.
+
+**Decision:** the purchasing gateway runs HTTPS on `127.0.0.1:8443` as `host.openshell.internal`, trusted through the derived supervisor image. The plain-HTTP fallback is not needed. A profile with `auth_style: bearer` also needs `header_name: authorization` in v0.1.2.
+
 ## MetaMynd POC tenant and latency probe (build plan step 0.6, spike S5)
 
 The POC uses the hosted MetaMynd service at `https://metamynd.ai/api/v1`, release `v1.71.0`, which contains AgentSafe #785. MetaMynd holds the Hedera operator account, so nothing on the POC host needs Hedera credentials.
