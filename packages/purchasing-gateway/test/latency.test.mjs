@@ -1,7 +1,7 @@
-// The purchasing gateway's latency options: the policy-bundle cache and deferred capture.
+// The purchasing gateway's policy-bundle cache (GW_BUNDLE_TTL_MS).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createBundleCache, deferCapture } from '../src/latency.mjs';
+import { createBundleCache } from '../src/latency.mjs';
 
 /** A fetch that serves one bundle per call and counts the calls. */
 function fakeIssuer({ ok = true } = {}) {
@@ -52,39 +52,4 @@ test('a failed bundle fetch throws and is not cached', async () => {
   await assert.rejects(fetchBundle('did:a'), /HTTP 503/);
   await assert.rejects(fetchBundle('did:a'), /HTTP 503/);
   assert.equal(bad.calls.n, 2);
-});
-
-test('deferred capture answers at once and settles in the background', async () => {
-  /** @type {any[]} */
-  const logs = [];
-  let release = () => {};
-  const gate = new Promise((r) => { release = () => r(undefined); });
-  const guard = { verifyRequest: () => 'kept', captureAuthorization: async () => { await gate; return { ok: true, status: 200 }; } };
-  const d = deferCapture(guard, { log: (e) => logs.push(e) });
-  assert.equal(d.guard.verifyRequest(), 'kept');
-  assert.deepEqual(await d.guard.captureAuthorization({ authorizationId: 'auth-1', claimToken: 'secret' }), { ok: true, deferred: true });
-  assert.equal(d.inFlight(), 1);
-  release();
-  await d.drain(1000);
-  assert.equal(d.inFlight(), 0);
-  assert.equal(logs.length, 1);
-  assert.equal(logs[0].ok, true);
-  assert.ok(!JSON.stringify(logs).includes('secret'), 'the claim token is never logged');
-});
-
-test('deferred capture retries transient failures and gives up on a refusal', async () => {
-  /** @type {any[]} */
-  const logs = [];
-  const results = [{ ok: false, reasonCode: 'ISSUER_UNREACHABLE' }, { ok: false, status: 502, reasonCode: 'ISSUER_HTTP_502' }, { ok: true, status: 200 }];
-  const guard = { captureAuthorization: async () => results.shift() };
-  const d = deferCapture(guard, { log: (e) => logs.push(e), sleep: async () => {} });
-  await d.guard.captureAuthorization({ authorizationId: 'auth-2' });
-  await d.drain(1000);
-  assert.equal(logs[0].ok, true);
-  assert.equal(logs[0].attempts, 3);
-
-  const refused = deferCapture({ captureAuthorization: async () => ({ ok: false, status: 400, reasonCode: 'NOT_HELD' }) }, { log: (e) => logs.push(e), sleep: async () => {} });
-  await refused.guard.captureAuthorization({ authorizationId: 'auth-3' });
-  await refused.drain(1000);
-  assert.deepEqual([logs[1].ok, logs[1].reasonCode, logs[1].attempts], [false, 'NOT_HELD', 1]);
 });

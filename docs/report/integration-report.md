@@ -50,7 +50,7 @@ flowchart LR
 | Mock purchasing API | An idempotent ledger with one row per `authorizationId` | `packages/mock-purchasing` |
 | Enrolment and tooling | BYOK testnet agents with daemon-held keys, counterparty registration, the stack, the matrix, evidence and latency harnesses | `packages/poc-cli`, `tools/` |
 
-**Versions:** OpenShell `v0.1.2` (`6648bd0c`). MetaMynd `metamynd.ai` release `v1.71.0` (latency re-measured on `v1.72.0`). `@metamynd/agentsafe-guard@0.17.0`, `agentsafe-http-gateway@0.15.0`, `agentsafe-mcp-guard@0.17.1`, `agentsafe-signer@0.19.1`. Host: Windows 11 with WSL2 Ubuntu 24.04, kernel 6.18, Docker Engine 29.8.1, Node 24 (see `versions.lock`).
+**Versions:** OpenShell `v0.1.2` (`6648bd0c`). MetaMynd `metamynd.ai` release `v1.71.0` (latency re-measured on `v1.72.0`). `@metamynd/agentsafe-guard@0.17.0`, `agentsafe-http-gateway@0.15.0` (0.16.0 from 30 Sep 2026), `agentsafe-mcp-guard@0.17.1`, `agentsafe-signer@0.19.1`. Host: Windows 11 with WSL2 Ubuntu 24.04, kernel 6.18, Docker Engine 29.8.1, Node 24 (see `versions.lock`).
 
 ## Results
 
