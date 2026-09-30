@@ -119,8 +119,11 @@ row R6 "A forges an x-magp-request as agent B" '403/metamynd_merchant_not_allowe
 [[ "$(journal_last "$sid_a")" == *"$did_a" ]] && ok "R6 the forged request was judged as agent A (identity comes from the sandbox)" || bad "R6 journal attributes the forged request to $(journal_last "$sid_a")"
 
 echo "== bypass attempts"
-out=$(exec_probe "$sb_a" 'exec 3<>/dev/tcp/host.openshell.internal/8443 && echo CONNECTED || echo REFUSED')
-[[ "$out" != *CONNECTED* ]] && ok "R7 raw TCP from a shell (/dev/tcp, binary not in policy) is refused" || bad "R7 raw TCP from a shell connected"
+# bash, not exec_probe's sh: /bin/sh is dash, which has no /dev/tcp and would "refuse" without trying.
+out=$(openshell sandbox exec -n "$sb_a" --no-tty -- bash -c 'exec 3<>/dev/tcp/host.openshell.internal/8443 && echo CONNECTED || echo REFUSED' 2>&1)
+if [[ "$out" == *CONNECTED* ]]; then bad "R7 raw TCP from a shell connected"
+elif [[ "$out" == *REFUSED* ]]; then ok "R7 raw TCP from bash (/dev/tcp, binary not in policy) is refused"
+else bad "R7 the bash probe did not run: ${out:0:200}"; fi
 before=$(ledger_count)
 out=$(exec_probe "$sb_a" 'curl -s -m 10 -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" --data-binary "{\"amount\":1,\"currency\":\"MYR\",\"merchant\":\"OfficeMart\"}" https://127.0.0.1:8443/purchase-requests')
 row R8 "curl to the gateway by IP literal" '000|403' "${out: -3}" "$(( $(ledger_count) - before ))"

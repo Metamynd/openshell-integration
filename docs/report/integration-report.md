@@ -145,20 +145,22 @@ OpenShell adds about 50 ms and the adapter about 100 ms. The rest is three seque
    - share the reload reproduction and the `request_id` request;
    - ask whether supervisor middleware is the intended long-term seam for external authorization, and about its path out of research preview.
 3. With the MetaMynd team: raise the latency and burst-availability items, document the anomaly floor for integrators, and add an assurance tier for supervisor-custodied keys.
-4. Record the five-minute demo below.
+4. Record the five-minute demo below with `tools/demo.sh`.
 
 ## Demo (five minutes)
 
-**Before recording:** the shots follow one run of `tools/m3-e2e.sh` and one of `tools/m4-matrix.sh verify-only`, so the enrolled agents work as they are. The M3 script buys at RM1, and its RM100 case is the anomaly escalation. To show an *allowed* RM100 purchase instead, enrol fresh agents with no history first. Keep DIDs and tenant details off screen.
+`tools/demo.sh` plays the demo as nine scenes, pausing for Enter between them. It sets up the stack off camera, shows each command and its result in plain language, and never prints DIDs, sandbox UUIDs or the token. [demo-script.md](demo-script.md) has the recording checklist and the narration for each scene:
 
-| Time | Shot | On screen |
-| --- | --- | --- |
-| 0:00–0:30 | The question: when an agent acts outside its mandate, can we stop it before the business system and show why? | Title card, then the diagram in "What was built" |
-| 0:30–1:00 | Two sandboxes, one adapter; the sandbox holds only a placeholder token | `tools/m3-e2e.sh` setup lines and the placeholder check |
-| 1:00–1:40 | A buys at OfficeMart → 201, exactly one ledger row | The M3 run's allow line and the ledger count |
-| 1:40–2:10 | B sends the identical request → `metamynd_merchant_not_allowed` | The M3 run's cross-agent line |
-| 2:10–2:50 | A at RM350 → human escalation; the request waits in the principal's review queue | The M3 run's escalation line, then the metamynd.ai review queue |
-| 2:50–3:20 | RM100 after an RM1 history → anomaly escalation, although every rule allows it | The M3 run's `SPEND_PATTERN_ANOMALY` line |
-| 3:20–3:50 | Bypass attempts: raw TCP, IP literal, the API port directly, a Python client | `tools/m4-matrix.sh verify-only`, rows R7–R9 and R19–R21, with the verify-only banner visible |
-| 3:50–4:30 | One decision traced across four sources, ending in the anchored Merkle proof | `docs/report/runs/m5-evidence.md` |
-| 4:30–5:00 | What each layer contributes, latency, and what is next | The Summary and Latency sections of this report |
+| # | Scene |
+| --- | --- |
+| 1 | The question, and two agents in two sandboxes sharing one MetaMynd service |
+| 2 | The sandbox holds only a placeholder token; the signing keys are out of reach |
+| 3 | A buys at OfficeMart → 201, exactly one ledger row |
+| 4 | B sends the identical request → refused (`metamynd_merchant_not_allowed`) |
+| 5 | RM600 → over the limit; RM350 → waits in the principal's review queue |
+| 6 | RM100 after an RM1 history → anomaly escalation, although every rule allows it |
+| 7 | Raw TCP, the gateway by IP, the API port directly, and a Python client |
+| 8 | Every decision joined across OpenShell, the journal, MetaMynd's anchored proof and the ledger |
+| 9 | What each layer did |
+
+The enrolled agents work as they are: their RM1 history is what makes scene 6 escalate. `DEMO_GW_MODE=verify-only` runs it with the purchasing gateway doing no MetaMynd checks.

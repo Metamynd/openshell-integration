@@ -533,3 +533,14 @@ All six decisions joined across all four sources:
 - **The ledger:** 6/6 consistent. The three allowed purchases each have exactly one row keyed by their `authorizationId`; the cap, escalation and wrong-merchant decisions have none.
 
 The join from OCSF to the journal uses the sandbox plus a time window, because OpenShell's OCSF events carry no `request_id`. That is an upstream request.
+
+## Demo recording
+
+```shell
+bash tools/demo.sh                   # press Enter between scenes
+DEMO_AUTO=3 bash tools/demo.sh       # rehearsal: advance automatically
+```
+
+The runner sets up the stack with sandboxes `demo-agent-a` and `demo-agent-b`, warms both clients (curl and Python), then plays nine scenes (see [demo-script.md](report/demo-script.md)). Evidence goes to `state/demo-evidence.{json,md}`, so it never overwrites the M5 run. If a scene misbehaves, an **Operator check** block on the last screen lists it, and the exit code is 1. Each run adds a few RM1 rows and two escalations that expire after 24 h.
+
+**R7 fix (30 Sep 2026).** R7 used to send its `/dev/tcp` probe through `sh`, which is dash in the sandbox image. Dash has no `/dev/tcp`, so R7 printed "refused" without testing OpenShell. R7 and the demo now use `bash`, and R7 fails if the probe does not run. Earlier R7 passes are not evidence; the next matrix run is.
