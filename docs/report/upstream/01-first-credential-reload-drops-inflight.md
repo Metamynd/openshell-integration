@@ -8,15 +8,16 @@ As an operator running an authorization middleware with a 1–3 s decision time,
 ## Problem statement
 On v0.1.2, the supervisor sometimes detects `provider_env_changed:true` with `policy_changed:false`. When it does, it bumps the policy generation and closes **every in-flight L7 tunnel**, including requests whose middleware evaluation is still running. The client sees an empty reply (curl `(52) Empty reply from server`), with no 403 and no 503.
 
-Two triggers were observed:
-1. **A sandbox's first use of a provider credential.** Each sandbox reloads exactly once, about 1–2 s after its first request that resolves a provider placeholder.
-2. **`openshell sandbox exec --env KEY=VALUE`**, about 0.8 s after the exec session opens.
+Three triggers were observed:
+1. **A sandbox's first use of a provider credential.** The sandbox reloads about 1–2 s after its first request that resolves a provider placeholder. The reload can also drop that first request itself.
+2. **The first use of the credential by a second binary in the same sandbox.** Both binaries were allowed in the policy. The sandbox had already used the credential from `curl` minutes earlier; the first request from `python3.12` then got an empty reply. That happened in 2 of 4 runs; the second run counted one stale-generation drop around it, and a retry succeeded. So the reload is at least per binary, not once per sandbox.
+3. **`openshell sandbox exec --env KEY=VALUE`**, about 0.8 s after the exec session opens.
 
 ## Impact
 - A new sandbox's first burst of requests is dropped. In our runs, availability of that burst was 0/10 and 4/10, against 10/10 after a one-request warm-up.
 - The client cannot tell a dropped request from a network failure, and gets no retry hint.
 - With middleware in the path (1–3 s per decision), the exposure window is wide.
-- Current workaround: send one warm-up request per sandbox and wait several seconds before real traffic, and never use `exec --env` while traffic is in flight. Neither is acceptable for a production agent's first actions.
+- Current workaround: send one warm-up request **per binary** per sandbox and wait several seconds before real traffic, and never use `exec --env` while traffic is in flight. Neither is acceptable for a production agent, which may start new tools at any time.
 
 ## Reproduction
 1. Gateway v0.1.2, Docker driver. Register an operator middleware that takes about 2 s to answer (any stub that sleeps and then allows).
@@ -32,6 +33,7 @@ NET:OPEN [MED] DENIED host.openshell.internal:8443 [reason:L7 tunnel closed befo
 ```
 
 5. Repeat after one warm-up request and an 8 s pause: all 5 succeed.
+6. Allow a second binary (for example `/usr/bin/python3.12`) for the same endpoint. After the warm-up, send one request from it: it can get an empty reply, with another stale-generation drop in the log.
 
 ## Environment
 OpenShell v0.1.2 (`.deb`, systemd user gateway, Docker driver 29.8.1), WSL2 Ubuntu 24.04, kernel 6.18.
@@ -47,4 +49,5 @@ OpenShell v0.1.2 (`.deb`, systemd user gateway, Docker driver 29.8.1), WSL2 Ubun
 
 ## Acceptance criteria
 - Concurrent first requests from a new sandbox all complete (or all get an explicit retryable status) when the only change is provider readiness.
+- A second binary's first credential use does not abort in-flight requests.
 - `exec --env` does not abort other in-flight requests in the sandbox.
