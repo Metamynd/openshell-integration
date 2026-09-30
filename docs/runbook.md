@@ -598,3 +598,21 @@ Findings:
 - **The enforcing gateway makes three metamynd.ai calls per purchase** (180 calls for 60 purchases), one after another. At about 0.3 s each, they are the rest of path (b) after authorize. Asynchronous capture, and removing or merging the third call, in `agentsafe-http-gateway` is the lever.
 - **The mock API closes each connection** (`Connection: close`). On loopback this costs nothing.
 - **Burst failures are not covered.** This run was sequential. Under a burst, Node opens one connection per concurrent request, so parallel handshakes remain a candidate for the `fetch failed` rate. Trace a matrix run to check.
+## Gateway latency options (bundle cache, deferred capture)
+
+Both are off by default. The adversarial matrix and the evidence run use the gateway as audited.
+
+| Variable | Effect | Trade-off |
+| --- | --- | --- |
+| `GW_BUNDLE_TTL_MS=30000` | Caches each agent's signed policy bundle for 30 s, through the guard's `fetchBundle` hook, instead of fetching it on every request. The signature and staleness checks still run per request | The gateway's own containment check lags by up to the TTL. The adapter's authorize and the claim still check live state on every purchase |
+| `GW_ASYNC_CAPTURE=1` | Answers once the upstream returns, then captures in the background. Transient failures are retried up to 3 times, each result is logged as `deferred_capture`, and in-flight captures get 10 s to drain on shutdown | A failed capture leaves the hold claimed and committed to the cap, and it is logged for reconciliation. The purchase has already executed |
+
+Measure them against a baseline:
+
+```shell
+PERF_N=100 PERF_LABEL=baseline bash tools/m5-perf.sh
+GW_BUNDLE_TTL_MS=30000 PERF_N=100 PERF_LABEL=bundle-cache bash tools/m5-perf.sh
+GW_BUNDLE_TTL_MS=30000 GW_ASYNC_CAPTURE=1 PERF_N=100 PERF_LABEL=optimized bash tools/m5-perf.sh
+```
+
+Results go to `docs/report/runs/m5-perf-<label>.json`. With `GW_ASYNC_CAPTURE=1`, the script checks that every background capture settled.
