@@ -18,10 +18,11 @@ MetaMynd's authorization runs as an OpenShell v0.1.2 **supervisor middleware**. 
 
 - **Technical pass: met.**
   - Every intended purchase executed once.
-  - Zero unauthorized ledger writes across an 18-row adversarial matrix, run twice.
+  - Zero unauthorized ledger writes across a 22-row adversarial matrix, run in both modes.
   - Every tested outage failed closed.
   - Two agent identities ran through one adapter with no cross-attribution.
-  - The upstream secret never reached the sandbox or the adapter.
+  - The upstream secret never reached the sandbox or the adapter, and no agent key, signer socket or signer variable was visible from inside a sandbox.
+  - The same controls held from a second client (Python) as from curl.
   - Nothing was forked; OpenShell `v0.1.2` and published MetaMynd packages were used as released.
 - **Product pass: met.** MetaMynd enforced what OpenShell alone cannot express: live mandates with merchant and spend rules, human-approval escalation, a behavioural spend-anomaly floor, per-agent identity, and anchored evidence. OpenShell enforced what MetaMynd alone cannot: kernel-level egress capture regardless of client (shell, raw TCP, IP, port), credential isolation, and bypass resistance. Both decisions appear in one joined trace.
 - **Collaboration pass: ready.** There is a public-safe repository with synthetic data, supported extension points only, measured latency, and seven upstream issue drafts ([upstream/](upstream/)), one of them a reproducible bug.
@@ -64,7 +65,7 @@ flowchart LR
 - **Secret isolation:** the sandbox held only `openshell:resolve:env:…`; the real token never appeared in the sandbox, the adapter journal or the adapter log.
 - **Concurrency:** across every concurrent burst, ledger rows equalled the 201 responses exactly, with no cross-attribution across 26 journaled decisions.
 
-### Adversarial matrix (M4, 18 rows, run with the purchasing gateway enforcing and in verify-only)
+### Adversarial matrix (M4, 22 rows, run with the purchasing gateway enforcing and in verify-only)
 
 | Row | Attack or case | Result, both modes |
 | --- | --- | --- |
@@ -76,6 +77,8 @@ flowchart LR
 | R13 | Concurrent purchases from two sandboxes | Ledger delta = 201s |
 | R14–R16 | Adapter down; MetaMynd unreachable; purchasing gateway down | Fail-closed, no ledger row |
 | R17–R18 | Sandbox deleted; recreated under the same name | Binding revoked; new UUID unbound |
+| R19–R21 | The same requests from Python instead of curl: allowed, over cap, IP literal | Executed once; denied; blocked |
+| R22 | Looking for the agents' keys from inside each sandbox | No signer socket, host `state/` path or signer variable visible |
 
 **In verify-only mode the purchasing gateway performed no MetaMynd checks, and OpenShell plus the adapter alone blocked every attack.**
 
@@ -104,6 +107,7 @@ OpenShell adds about 50 ms and the adapter about 100 ms. The rest is three seque
 1. **A sandbox's first provider-credential use triggers a reload that drops in-flight requests.** Each sandbox reloads its provider environment once (`provider_env_changed:true`, `policy_changed:false`). The reload closes every in-flight L7 tunnel with an empty reply, including requests still inside middleware evaluation. `openshell sandbox exec --env` triggers the same reload.
    - Safety held throughout.
    - Availability of a sandbox's first burst dropped to 0–4/10, and recovered to 10/10 after a warm-up.
+   - A second binary's first use of the credential triggers it again: Python's first purchase, after curl had already used the credential, got an empty reply in 2 of 4 runs. A warm-up must cover every binary.
    - [Draft bug report](upstream/01-first-credential-reload-drops-inflight.md).
 2. **Middleware OCSF events carry no `request_id`**, so correlation needs the middleware's own journal and a time-window join. [Draft](upstream/02-request-id-in-middleware-ocsf.md).
 3. **The response hook does not fire when the upstream fails**, so a middleware cannot learn every outcome. Settlement was moved to the counterparty gateway. [Draft](upstream/03-completion-notification-hook.md).
@@ -132,7 +136,7 @@ OpenShell adds about 50 ms and the adapter about 100 ms. The rest is three seque
 - **One protected HTTPS API with a JSON body.** WebSocket, streaming, `tls: skip`, `protocol: tcp` and IP-level reachability through other rules are **not** covered. The policy lint flags them.
 - **Sample sizes** are local and small (100 per latency path). They are not production figures.
 - **The independent threat review (task 4.7) is still open.** Deferred: cleanup of unclaimed holds (MetaMynd lapses them), escalation approve-then-retry, a policy-integrity gateway interceptor, MetaMynd-side mandate revocation in the matrix (it would revoke the enrolled agents), and a later middleware rewriting the body (it needs a second service; the purchasing gateway refuses tampered bodies).
-- **The enrolled agents' spend history is now RM1-scale**, so an RM100 demo needs fresh agents.
+- **The enrolled agents' spend history is now RM1-scale**, so showing an allowed RM100 purchase needs fresh agents.
 
 ## Next steps
 
@@ -141,4 +145,20 @@ OpenShell adds about 50 ms and the adapter about 100 ms. The rest is three seque
    - share the reload reproduction and the `request_id` request;
    - ask whether supervisor middleware is the intended long-term seam for external authorization, and about its path out of research preview.
 3. With the MetaMynd team: raise the latency and burst-availability items, document the anomaly floor for integrators, and add an assurance tier for supervisor-custodied keys.
-4. Prepare a five-minute demo with fresh agents: an allowed purchase, a cross-agent denial, an escalation, an anomaly escalation, a shell bypass attempt, and the joined evidence trail.
+4. Record the five-minute demo below.
+
+## Demo (five minutes)
+
+**Before recording:** the shots follow one run of `tools/m3-e2e.sh` and one of `tools/m4-matrix.sh verify-only`, so the enrolled agents work as they are. The M3 script buys at RM1, and its RM100 case is the anomaly escalation. To show an *allowed* RM100 purchase instead, enrol fresh agents with no history first. Keep DIDs and tenant details off screen.
+
+| Time | Shot | On screen |
+| --- | --- | --- |
+| 0:00–0:30 | The question: when an agent acts outside its mandate, can we stop it before the business system and show why? | Title card, then the diagram in "What was built" |
+| 0:30–1:00 | Two sandboxes, one adapter; the sandbox holds only a placeholder token | `tools/m3-e2e.sh` setup lines and the placeholder check |
+| 1:00–1:40 | A buys at OfficeMart → 201, exactly one ledger row | The M3 run's allow line and the ledger count |
+| 1:40–2:10 | B sends the identical request → `metamynd_merchant_not_allowed` | The M3 run's cross-agent line |
+| 2:10–2:50 | A at RM350 → human escalation; the request waits in the principal's review queue | The M3 run's escalation line, then the metamynd.ai review queue |
+| 2:50–3:20 | RM100 after an RM1 history → anomaly escalation, although every rule allows it | The M3 run's `SPEND_PATTERN_ANOMALY` line |
+| 3:20–3:50 | Bypass attempts: raw TCP, IP literal, the API port directly, a Python client | `tools/m4-matrix.sh verify-only`, rows R7–R9 and R19–R21, with the verify-only banner visible |
+| 3:50–4:30 | One decision traced across four sources, ending in the anchored Merkle proof | `docs/report/runs/m5-evidence.md` |
+| 4:30–5:00 | What each layer contributes, latency, and what is next | The Summary and Latency sections of this report |

@@ -14,7 +14,7 @@ The POC is complete through M5 on one host (OpenShell `v0.1.2`, metamynd.ai `v1.
 3. is re-verified and settled by MetaMynd's purchasing gateway;
 4. executes exactly once.
 
-An 18-row adversarial matrix passed with the purchasing gateway enforcing and in verify-only mode. Every decision joins across OpenShell OCSF, the adapter journal, MetaMynd evidence and the ledger. The independent threat review is still open.
+A 22-row adversarial matrix, including a second client and a check that no agent key is reachable from a sandbox, passed with the purchasing gateway enforcing and in verify-only mode. Every decision joins across OpenShell OCSF, the adapter journal, MetaMynd evidence and the ledger. The independent threat review is still open.
 
 ## Contents
 
