@@ -524,6 +524,29 @@ Findings:
 - **Where to reduce it:** a MetaMynd region closer to the workload, a faster permit path (see the M0 S5 note), and settling the capture asynchronously. The upstream response does not depend on the capture.
 - Evidence run 1 (same session): **all 6 decisions joined in MetaMynd**, with the evidence record, trust-graph path and anchored Merkle proof for each, and the ledger was consistent for all 6. OCSF joined 5 of 6: the last denial's OCSF line had not reached the gateway yet when the logs were read immediately after it. The script now reads the logs after the 75 s anchoring wait.
 
+### Result: latency on metamynd.ai v1.72.0, 30 Sep 2026 (100 sequential RM1 purchases per path, all 201)
+
+`v1.72.0` made MetaMynd's decision path asynchronous. The POC's npm packages are unchanged (`agentsafe-guard` 0.17.0, `agentsafe-http-gateway` 0.15.0), so only the server changed.
+
+| Path | p50 | p95 | p99 | mean | max | p50 on v1.71.0 |
+| --- | --- | --- | --- | --- | --- | --- |
+| (a) OpenShell only | 50 ms | 78 ms | 100 ms | 54 ms | 104 ms | 47 ms |
+| (b) MetaMynd only | 1308 ms | 1440 ms | 1512 ms | 1328 ms | 2256 ms | 2873 ms |
+| (c) combined | 1410 ms | 1868 ms | 2309 ms | 1469 ms | 2335 ms | 3024 ms |
+
+`tools/m0-latency.sh` (20 signed authorize calls per class, including signing):
+
+| Class | min | p50 | p95 | max | p50 on v1.71.0 |
+| --- | --- | --- | --- | --- | --- |
+| Deny (`MERCHANT_NOT_ALLOWED`) | 314 ms | 339 ms | 731 ms | 1453 ms | 405 ms |
+| Allow (`AUTHORIZED`, RM1) | 340 ms | 358 ms | 643 ms | 852 ms | 1213 ms |
+
+Findings:
+- **Both MetaMynd paths are more than twice as fast** (combined p50 −53%, p99 4256 → 2309 ms). OpenShell (about 50 ms) and the adapter (combined − a − b ≈ 50 ms) are unchanged.
+- **The permit penalty is gone.** An allow costs the same as a deny, so the M0 S5 performance item is resolved.
+- **Timeout headroom.** Authorize's p95 is now 643 ms against the adapter's 4 s deadline and OpenShell's 5 s timeout. The timeouts stay as they are; lowering them would trade availability for nothing.
+- **What is left is claim and capture.** Path (b) minus authorize leaves about 0.9 s for the purchasing gateway's claim and capture calls, which `agentsafe-http-gateway@0.15.0` still makes one after the other (an estimate; not measured separately). Asynchronous capture in the published gateway is the next step.
+
 ### Result: evidence, 29 Sep 2026 (task 5.1 passed)
 
 All six decisions joined across all four sources:
@@ -533,3 +556,16 @@ All six decisions joined across all four sources:
 - **The ledger:** 6/6 consistent. The three allowed purchases each have exactly one row keyed by their `authorizationId`; the cap, escalation and wrong-merchant decisions have none.
 
 The join from OCSF to the journal uses the sandbox plus a time window, because OpenShell's OCSF events carry no `request_id`. That is an upstream request.
+
+## Demo recording
+
+```shell
+bash tools/demo.sh                   # press Enter between scenes
+DEMO_AUTO=3 bash tools/demo.sh       # rehearsal: advance automatically
+```
+
+The runner sets up the stack with sandboxes `demo-agent-a` and `demo-agent-b`, warms both clients (curl and Python), then plays nine scenes (see [demo-script.md](report/demo-script.md)). Evidence goes to `state/demo-evidence.{json,md}`, so it never overwrites the M5 run. If a scene misbehaves, an **Operator check** block on the last screen lists it, and the exit code is 1. Each run adds a few RM1 rows and two escalations that expire after 24 h.
+
+**R7 fix (30 Sep 2026).** R7 used to send its `/dev/tcp` probe through `sh`, which is dash in the sandbox image. Dash has no `/dev/tcp`, so R7 printed "refused" without testing OpenShell. R7 and the demo now use `bash`, and R7 fails if the probe does not run. **Verified on 30 Sep 2026** (verify-only, sandboxes `3d20b95b…` and `7e879ef1…`): OpenShell refused the raw TCP connection from `bash`, and every other row passed again. Burst availability was 6/10, with no empty replies and no stale drops, and the ledger delta equalled the 201s.
+
+**Rehearsal, 30 Sep 2026.** `DEMO_AUTO=3 bash tools/demo.sh` ran all nine scenes with no operator-check mismatches. Exactly one purchase executed (scene 3); the RM100 case in scene 6 did not execute.
