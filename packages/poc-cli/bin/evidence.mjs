@@ -4,9 +4,10 @@
 //   MetaMynd evidence (GET /evidence/:eventId -> decision digest, anchoring; trust-graph evidence path;
 //                      public Merkle inclusion proof)  -->
 //   purchasing ledger (Idempotency-Key = authorizationId)
-// Usage: node packages/poc-cli/bin/evidence.mjs --since <iso> --log <sandbox>=<file> [--log ...]
-// Env: MM_USERNAME, MM_PASSWORD, MM_API (optional), LEDGER_TOKEN. Writes docs/report/runs/m5-evidence.{json,md}.
+// Usage: node packages/poc-cli/bin/evidence.mjs --since <iso> --log <sandbox>=<file> [--log ...] [--out <path prefix>]
+// Env: MM_USERNAME, MM_PASSWORD, MM_API (optional), LEDGER_TOKEN. Writes <prefix>.{json,md}, by default docs/report/runs/m5-evidence.
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { createApi } from '../src/api.mjs';
 
 const args = process.argv.slice(2);
@@ -105,14 +106,15 @@ const summary = {
   proofsAvailable: count((x) => x.metamynd?.proof === 200),
   ledgerConsistent: count((x) => x.joined.ledger),
 };
-mkdirSync('docs/report/runs', { recursive: true });
-writeFileSync('docs/report/runs/m5-evidence.json', `${JSON.stringify({ since, summary, rows }, null, 2)}\n`);
+const out = args.includes('--out') ? args[args.indexOf('--out') + 1] : 'docs/report/runs/m5-evidence';
+mkdirSync(dirname(out), { recursive: true });
+writeFileSync(`${out}.json`, `${JSON.stringify({ since, summary, rows }, null, 2)}\n`);
 const md = [
   '| time (UTC) | sandbox | decision | reason | upstream | OCSF | MetaMynd event / path / proof | ledger |',
   '| --- | --- | --- | --- | --- | --- | --- | --- |',
   ...rows.map((x) => `| ${x.at.slice(11, 19)} | ${x.sandbox} | ${x.decision} | ${x.reason ?? ''} | ${x.upstreamStatus ?? '–'} | ${x.joined.ocsf ? 'joined' : `missing (${x.ocsf.candidates} candidates)`} | ${x.metamynd ? `${x.metamynd.event} / ${x.metamynd.evidencePath ?? '–'} / ${x.metamynd.proof}` : '–'} | ${x.ledgerId ?? (x.joined.ledger ? 'none (correct)' : 'MISSING')} |`),
 ];
-writeFileSync('docs/report/runs/m5-evidence.md', `${md.join('\n')}\n`);
+writeFileSync(`${out}.md`, `${md.join('\n')}\n`);
 console.log(md.join('\n'));
 console.log(JSON.stringify(summary));
 const ok = summary.ocsfJoined === rows.length && summary.ledgerConsistent === rows.length && summary.metamyndJoined === summary.metamyndWithEvent;

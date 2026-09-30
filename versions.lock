@@ -26,8 +26,8 @@
     },
     "service": {
       "apiBase": "https://metamynd.ai/api/v1",
-      "release": "v1.71.0",
-      "note": "hosted instance the POC targets; v1.71.0 contains #785. MetaMynd holds the Hedera operator account."
+      "release": "v1.72.0",
+      "note": "hosted instance the POC targets. M0-M4 ran on v1.71.0 (contains #785); v1.72.0 (asynchronous decision path) was deployed on 30 Sep 2026 and the M5 latency re-measured on it. MetaMynd holds the Hedera operator account."
     },
     "packages": {
       "@metamynd/agentsafe-guard": "0.17.x",
