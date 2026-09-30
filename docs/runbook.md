@@ -524,6 +524,29 @@ Findings:
 - **Where to reduce it:** a MetaMynd region closer to the workload, a faster permit path (see the M0 S5 note), and settling the capture asynchronously. The upstream response does not depend on the capture.
 - Evidence run 1 (same session): **all 6 decisions joined in MetaMynd**, with the evidence record, trust-graph path and anchored Merkle proof for each, and the ledger was consistent for all 6. OCSF joined 5 of 6: the last denial's OCSF line had not reached the gateway yet when the logs were read immediately after it. The script now reads the logs after the 75 s anchoring wait.
 
+### Result: latency on metamynd.ai v1.72.0, 30 Sep 2026 (100 sequential RM1 purchases per path, all 201)
+
+`v1.72.0` made MetaMynd's decision path asynchronous. The POC's npm packages are unchanged (`agentsafe-guard` 0.17.0, `agentsafe-http-gateway` 0.15.0), so only the server changed.
+
+| Path | p50 | p95 | p99 | mean | max | p50 on v1.71.0 |
+| --- | --- | --- | --- | --- | --- | --- |
+| (a) OpenShell only | 50 ms | 78 ms | 100 ms | 54 ms | 104 ms | 47 ms |
+| (b) MetaMynd only | 1308 ms | 1440 ms | 1512 ms | 1328 ms | 2256 ms | 2873 ms |
+| (c) combined | 1410 ms | 1868 ms | 2309 ms | 1469 ms | 2335 ms | 3024 ms |
+
+`tools/m0-latency.sh` (20 signed authorize calls per class, including signing):
+
+| Class | min | p50 | p95 | max | p50 on v1.71.0 |
+| --- | --- | --- | --- | --- | --- |
+| Deny (`MERCHANT_NOT_ALLOWED`) | 314 ms | 339 ms | 731 ms | 1453 ms | 405 ms |
+| Allow (`AUTHORIZED`, RM1) | 340 ms | 358 ms | 643 ms | 852 ms | 1213 ms |
+
+Findings:
+- **Both MetaMynd paths are more than twice as fast** (combined p50 −53%, p99 4256 → 2309 ms). OpenShell (about 50 ms) and the adapter (combined − a − b ≈ 50 ms) are unchanged.
+- **The permit penalty is gone.** An allow costs the same as a deny, so the M0 S5 performance item is resolved.
+- **Timeout headroom.** Authorize's p95 is now 643 ms against the adapter's 4 s deadline and OpenShell's 5 s timeout. The timeouts stay as they are; lowering them would trade availability for nothing.
+- **What is left is claim and capture.** Path (b) minus authorize leaves about 0.9 s for the purchasing gateway's claim and capture calls, which `agentsafe-http-gateway@0.15.0` still makes one after the other (an estimate; not measured separately). Asynchronous capture in the published gateway is the next step.
+
 ### Result: evidence, 29 Sep 2026 (task 5.1 passed)
 
 All six decisions joined across all four sources:
