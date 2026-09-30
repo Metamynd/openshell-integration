@@ -89,6 +89,25 @@ buy() {
     'curl -sS -m 20 -w "\n%{http_code}" -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $PURCHASING_TOKEN" "$@" --data-binary @- https://host.openshell.internal:8443/purchase-requests' \
     sh "$@" <<<"$body" 2>/dev/null
 }
+# buy_py <sandbox> <json> [url]: the same purchase from Python's urllib instead of curl; same output shape
+PY_BUY=$(cat <<'PY'
+import json, os, sys, urllib.error, urllib.request
+req = urllib.request.Request(sys.argv[1], data=sys.stdin.buffer.read(), method="POST", headers={
+    "Content-Type": "application/json", "Authorization": "Bearer " + os.environ.get("PURCHASING_TOKEN", "")})
+try:
+    with urllib.request.urlopen(req, timeout=20) as r:
+        code, out = r.status, r.read()
+except urllib.error.HTTPError as e:
+    code, out = e.code, e.read()
+except Exception as e:
+    code, out = 0, json.dumps({"error": type(e).__name__ + ": " + str(e)[:200]}, separators=(",", ":")).encode()
+sys.stdout.write(out.decode("utf-8", "replace") + "\n%03d" % code)
+PY
+)
+buy_py() {
+  openshell sandbox exec -n "$1" --no-tty -- sh -c '/usr/bin/python3.12 -c "$1" "$2"' \
+    sh "$PY_BUY" "${3:-https://host.openshell.internal:8443/purchase-requests}" <<<"$2" 2>/dev/null
+}
 status_of() { tail -n1 <<<"$1"; }
 body_of()   { sed '$d' <<<"$1"; }
 # OpenShell's denial body uses reason_code; the purchasing gateway's refusal body uses reasonCode.

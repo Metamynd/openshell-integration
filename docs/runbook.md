@@ -405,6 +405,14 @@ bash tools/m4-matrix.sh verify-only
 | R16 | Purchasing gateway down after an allow (enforcing run only) | No ledger row; the hold lapses unclaimed |
 | R17 | Sandbox deleted | The watcher revokes its binding |
 | R18 | Recreated under the same name | New UUID, `metamynd_binding_unknown` |
+| R19 | A buys RM1 at OfficeMart from Python `urllib` instead of curl | 201, ledger +1 |
+| R20 | A over its cap from Python | `metamynd_sop_spend_cap` |
+| R21 | Python to the gateway by IP literal | Blocked |
+| R22 | From inside each sandbox: look for the signer sockets, the host `state/` path, any UNIX socket and any signer-related environment variable | None visible |
+
+R19–R22 were added on 30 Sep 2026 to close two report gaps: every earlier row used curl, and no test had looked for the agents' keys from inside a sandbox. The sandbox image now includes `python3`, and the M3 policy allows `/usr/bin/python3.12` alongside curl. R22 prints variable names only, never values.
+
+Allowed-purchase rows (`attempt_allow`) retry an empty reply from OpenShell, but only when the ledger shows nothing executed, so a retry can never buy twice. Each retry prints a `note` line with the stale-generation drop count.
 
 It also runs `tools/policy-lint.sh` against each sandbox's effective policy, checking for: `tls: skip`, `protocol: tcp`, `allowed_ips`, literal-IP hosts, `enforcement: audit`, `fail_open`, a missing adapter, or an adapter that is not the last stage.
 
@@ -464,6 +472,17 @@ Upstream report candidate: *"The first provider-credential use in a sandbox trig
 **Confirmed, 29 Sep 2026 (verify-only, sandboxes `8315f7f6…` and `151d7aef…`).** With R13a warming up B's credential and an 8 s pause, **every row passed and the burst was 10/10**, compared with 0/10 and 4/10 without the warm-up. The warm-up request itself completed before its reload landed (0 stale drops). So the loss comes from OpenShell's one-time reload after a sandbox's first credential use, not from load or from the adapter.
 
 Operational implication: until this is fixed upstream, a newly started sandbox's first burst of requests can be dropped (fail-closed). A deployment can warm each sandbox with one request after start.
+
+### Result: R19–R22, 30 Sep 2026 on COO-JASIM-NB1 (every row passed in both modes)
+
+Sandboxes `b764ebb0…` and `3ec4b074…` (enforcing); `6c3886c5…` and `65ffafc8…` (verify-only). All 22 rows passed in both modes, with policy lint clean.
+
+- **A second client.** From Python `urllib`, A's RM1 purchase executed exactly once (R19), A over its cap was denied with `metamynd_sop_spend_cap` (R20), and Python to the gateway by IP literal was blocked (R21). The middleware and L4 controls apply whichever allowed binary sends the request.
+- **Agent keys.** From inside both sandboxes in both modes, none of the 3 host signer sockets, the host `state/` path or any signer-related environment variable was visible, and the agent could find no UNIX socket at all (R22).
+
+**Finding: a second binary's first credential use also triggers the reload.** Sandbox A had already used its credential from curl at R1. Python's first purchase then got an empty reply in 2 of 4 runs (both enforcing), with nothing executed. In the second of those runs, the script counted one stale-generation drop around it, and the retry executed exactly once. So the reload is at least per binary, not once per sandbox. A warm-up therefore has to cover every binary that will use the credential. Upstream draft 01 now includes this trigger.
+
+The first run of this version, without the empty-reply retry, failed R19 (enforcing) and R13a (verify-only, one stale drop logged) for this reason; nothing executed in either. **Burst availability** in the second enforcing run was 4/10, with no empty replies and no stale drops: the other six were 403 refusals, most likely the known burst failures to metamynd.ai (not confirmed from the journal). The ledger delta still equalled the 201s.
 
 ## M5: evidence and performance (build plan tasks 5.1, 5.2)
 

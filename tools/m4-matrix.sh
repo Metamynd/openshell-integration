@@ -26,12 +26,13 @@ row() {
   if [[ "$got" =~ ^($want)$ && "$delta" == "$want_delta" ]]; then ok "$id $desc -> $got, ledger +$delta"
   else bad "$id $desc -> ${got:-no response} (want $want), ledger +$delta (want +$want_delta)"; fi
 }
-# attempt <sandbox> <json> [curl args]: sets R (response), CODE ("<status>/<reason or error>"), DELTA
+# attempt <sandbox> <json> [curl args]: sets R (response), CODE ("<status>/<reason or error>"), DELTA.
+# BUY=buy_py sends it from Python instead of curl.
 attempt() {
   local before started
   started=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
   before=$(ledger_count)
-  R=$(buy "$@")
+  R=$("${BUY:-buy}" "$@")
   local reason
   reason=$(reason_of "$R")
   [[ -z "$reason" ]] && reason=$(error_of "$R")
@@ -51,14 +52,19 @@ attempt() {
 journal_os_since() {
   cat state/journal/*.jsonl 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=s.split("\n").filter(Boolean).map(JSON.parse).filter(x=>x.kind==="request"&&x.sandboxId===process.argv[1]&&x.ts>=process.argv[2]).at(-1);if(r&&r.osReasonCode)console.log(r.osReasonCode)})' "$1" "$2"
 }
-# attempt_allow: like attempt, but retries (up to 2 more times) when the refusal is an availability
-# failure (MetaMynd unreachable/slow), which fails closed and is reported separately from security.
+# attempt_allow: like attempt, but retries (up to 2 more times) on an availability failure, which fails
+# closed and is reported separately from security: MetaMynd unreachable or slow, or an empty reply from
+# OpenShell (its provider-environment reload drops in-flight requests, runbook M4). An empty reply is
+# retried only when the ledger shows nothing executed, so a retry can never buy twice.
 attempt_allow() {
   local n
   for n in 1 2 3; do
     attempt "$@"
-    [[ "$CODE" =~ ^403/metamynd_(unavailable|gate_unreachable)$ ]] || return 0
-    note "availability: attempt $n refused with ${CODE#403/} (fail-closed, ledger +$DELTA); retrying"
+    if [[ "$CODE" =~ ^403/metamynd_(unavailable|gate_unreachable)$ ]]; then
+      note "availability: attempt $n refused with ${CODE#403/} (fail-closed, ledger +$DELTA); retrying"
+    elif [[ "$CODE" == 000/* && "$DELTA" == 0 ]]; then
+      note "availability: attempt $n got an empty reply from OpenShell (ledger +0; stale-generation drops so far: $(stale_drops)); retrying"
+    else return 0; fi
     sleep 2
   done
 }
@@ -128,6 +134,41 @@ attempt "$sb_a" '{"amount":1,"currency":"MYR","merchant":"OfficeMart"}' -H 'Cont
 row R11 "declared gzip body" '403/metamynd_request_rejected' "$CODE" "$DELTA"
 attempt "$sb_a" '{"amount":1,"currency":"MYR","merchant":"PaperCo"}' -H 'Connection: Upgrade' -H 'Upgrade: websocket'
 row R12 "WebSocket upgrade on a denied purchase" '[0-9]{3}/.*' "$CODE" "$DELTA"
+
+echo "== a second client (Python urllib instead of curl)"
+# First credential use by a second binary: does OpenShell reload the provider environment again?
+drops_py=$(stale_drops)
+BUY=buy_py attempt_allow "$sb_a" '{"amount":1,"currency":"MYR","merchant":"OfficeMart"}'
+row R19 "A buys RM1 at OfficeMart from Python" '201/' "$CODE" "$DELTA" 1
+sleep 4
+note "stale-generation drops around Python's first credential use: $(( $(stale_drops) - drops_py ))"
+BUY=buy_py attempt "$sb_a" '{"amount":600,"currency":"MYR","merchant":"OfficeMart"}'
+row R20 "A over its RM500 cap from Python" '403/metamynd_sop_spend_cap' "$CODE" "$DELTA"
+before=$(ledger_count)
+R=$(buy_py "$sb_a" '{"amount":1,"currency":"MYR","merchant":"OfficeMart"}' https://127.0.0.1:8443/purchase-requests)
+row R21 "Python to the gateway by IP literal" '000|403' "$(status_of "$R")" "$(( $(ledger_count) - before ))"
+
+echo "== agent keys are unreachable from a sandbox"
+# The agents' keys live only in the signer daemons on the host, behind UNIX sockets under state/.
+# Look for them from inside each sandbox, as the agent: the host paths, any UNIX socket the agent can
+# find, and any signer-related environment variable (names only, never values).
+socks=("$PWD"/state/signers/*/signer.sock)
+if [[ ! -S "${socks[0]}" ]]; then bad "R22 precondition: no signer sockets on the host to look for"
+else
+  for sb in "$sb_a" "$sb_b"; do
+    out=$(openshell sandbox exec -n "$sb" --no-tty -- sh -c '
+      for p in "$@"; do [ -e "$p" ] && echo "VISIBLE $p"; done
+      find / \( -path /proc -o -path /sys \) -prune -o -type s -print 2>/dev/null | sed "s/^/SOCKET /"
+      env | cut -d= -f1 | grep -iE "signer|passphrase|agentsafe|kek" | sed "s/^/ENV /"
+      echo PROBE_DONE' sh "$PWD/state" "$PWD/state/signers" "${socks[@]}" 2>&1)
+    visible=$(grep -E '^(VISIBLE|ENV) ' <<<"$out" | tr '\n' ' ')
+    signer_socks=$(grep '^SOCKET ' <<<"$out" | grep -i signer | tr '\n' ' ')
+    nsock=$(grep -c '^SOCKET ' <<<"$out" || true)
+    if [[ "$out" != *PROBE_DONE* ]]; then bad "R22 [$sb] the probe did not run: ${out:0:200}"
+    elif [[ -z "$visible$signer_socks" ]]; then ok "R22 [$sb] no signer socket, host state/ path or signer variable is visible (${#socks[@]} host sockets checked; $nsock other UNIX sockets found)"
+    else bad "R22 [$sb] reachable from the sandbox: $visible$signer_socks"; fi
+  done
+fi
 
 echo "== warm-up: first credential use in sandbox B"
 # Observed on v0.1.2: each sandbox reloads its provider environment once, shortly after its provider
