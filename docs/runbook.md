@@ -405,6 +405,12 @@ bash tools/m4-matrix.sh verify-only
 | R16 | Purchasing gateway down after an allow (enforcing run only) | No ledger row; the hold lapses unclaimed |
 | R17 | Sandbox deleted | The watcher revokes its binding |
 | R18 | Recreated under the same name | New UUID, `metamynd_binding_unknown` |
+| R19 | A buys RM1 at OfficeMart from Python `urllib` instead of curl | 201, ledger +1 |
+| R20 | A over its cap from Python | `metamynd_sop_spend_cap` |
+| R21 | Python to the gateway by IP literal | Blocked |
+| R22 | From inside each sandbox: look for the signer sockets, the host `state/` path, any UNIX socket and any signer-related environment variable | None visible |
+
+R19–R22 were added on 30 Sep 2026 to close two report gaps: every earlier row used curl, and no test had looked for the agents' keys from inside a sandbox. The sandbox image now includes `python3`, and the M3 policy allows `/usr/bin/python3.12` alongside curl. R22 prints variable names only, never values.
 
 It also runs `tools/policy-lint.sh` against each sandbox's effective policy, checking for: `tls: skip`, `protocol: tcp`, `allowed_ips`, literal-IP hosts, `enforcement: audit`, `fail_open`, a missing adapter, or an adapter that is not the last stage.
 
