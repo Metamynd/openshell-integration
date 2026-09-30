@@ -569,3 +569,14 @@ The runner sets up the stack with sandboxes `demo-agent-a` and `demo-agent-b`, w
 **R7 fix (30 Sep 2026).** R7 used to send its `/dev/tcp` probe through `sh`, which is dash in the sandbox image. Dash has no `/dev/tcp`, so R7 printed "refused" without testing OpenShell. R7 and the demo now use `bash`, and R7 fails if the probe does not run. **Verified on 30 Sep 2026** (verify-only, sandboxes `3d20b95b…` and `7e879ef1…`): OpenShell refused the raw TCP connection from `bash`, and every other row passed again. Burst availability was 6/10, with no empty replies and no stale drops, and the ledger delta equalled the 201s.
 
 **Rehearsal, 30 Sep 2026.** `DEMO_AUTO=3 bash tools/demo.sh` ran all nine scenes with no operator-check mismatches. Exactly one purchase executed (scene 3); the RM100 case in scene 6 did not execute.
+## Connection reuse to metamynd.ai
+
+```shell
+rm -rf state/conn-trace
+CONN_TRACE_DIR=state/conn-trace NODE_OPTIONS="--import=$PWD/tools/lib/conn-trace.mjs" PERF_N=30 bash tools/m5-perf.sh
+node tools/lib/conn-trace.mjs --report state/conn-trace
+```
+
+`tools/lib/conn-trace.mjs` is preloaded into every Node process the script starts: the adapter, the purchasing gateway and the latency client. Using Node's built-in `diagnostics_channel` events from `fetch`, it counts new TCP/TLS connections against requests for each origin. It also records the median handshake time and the server's `connection` and `keep-alive` headers. It records no bodies, paths or other header values. `reuse` near 0% means a new connection per request.
+
+What a local probe showed on 30 Sep 2026 (from a laptop, not the POC host): metamynd.ai answers `Connection: keep-alive` with no `Keep-Alive` timeout. So Node's `fetch` reuses a connection only while it has been idle for less than its default of about 4 s. Five requests 0.3 s apart used 1 connection; three requests 6 s apart used 3.
