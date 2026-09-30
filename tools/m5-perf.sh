@@ -5,8 +5,9 @@
 #   (b) metamynd-only   agent A -> metamynd.ai authorize -> enforcing purchasing gateway (no OpenShell)
 #   (c) combined        sandbox -> OpenShell -> MetaMynd adapter (authorize at metamynd.ai) -> enforcing gateway
 # Writes docs/report/runs/m5-perf[-$PERF_LABEL].json. Each sandbox is warmed first (OpenShell's first-credential reload).
-# Gateway latency options pass through the environment (packages/purchasing-gateway/src/latency.mjs):
-#   GW_BUNDLE_TTL_MS=30000 GW_ASYNC_CAPTURE=1 PERF_LABEL=optimized bash tools/m5-perf.sh
+# Gateway options pass through the environment (packages/purchasing-gateway/src/main.mjs):
+#   GW_SETTLE_IN_BACKGROUND=0 PERF_LABEL=settle-first bash tools/m5-perf.sh   capture before answering (pre-0.16.0)
+#   GW_BUNDLE_TTL_MS=30000 PERF_LABEL=bundle-cache bash tools/m5-perf.sh      also cache the policy bundle
 set -uo pipefail
 cd "$(dirname "$0")/.."
 . tools/lib/poc-env.sh
@@ -41,7 +42,7 @@ bind_sandbox "$sb_mm" A >/dev/null || die "bind"
 loop_in "$sb_os" 1 >/dev/null
 loop_in "$sb_mm" 1 >/dev/null
 sleep 8
-ok "ready: $N purchases per path; gateway options: bundle cache ${GW_BUNDLE_TTL_MS:-0} ms, async capture ${GW_ASYNC_CAPTURE:-0}"
+ok "ready: $N purchases per path; gateway options: settle in background ${GW_SETTLE_IN_BACKGROUND:-1}, bundle cache ${GW_BUNDLE_TTL_MS:-0} ms"
 
 echo "== (a) openshell-only"
 loop_in "$sb_os" "$N" > state/perf-a.txt
@@ -53,13 +54,11 @@ NODE_EXTRA_CA_CERTS=state/certs/ca.pem PURCHASING_API_TOKEN=$(cat state/purchasi
   node packages/poc-cli/bin/perf-native.mjs > state/perf-b.txt
 echo "== (c) combined"
 loop_in "$sb_mm" "$N" > state/perf-c.txt
-if [[ "${GW_ASYNC_CAPTURE:-}" == 1 ]]; then
-  sleep 3 # let the last background captures land
-  cap_ok=$(grep -c '"event":"deferred_capture".*"ok":true' state/logs/gateway.log || true)
-  cap_bad=$(grep -c '"event":"deferred_capture".*"ok":false' state/logs/gateway.log || true)
-  (( cap_bad == 0 )) && ok "deferred captures: $cap_ok settled, 0 failed" \
-    || { bad "deferred captures: $cap_ok settled, $cap_bad failed (holds stay committed to the cap):"; grep '"event":"deferred_capture".*"ok":false' state/logs/gateway.log | tail -n 5; }
-fi
+# agentsafe-http-gateway (0.16.0+) logs every settlement that did not land: "<capture|release|mark-unknown> of <id> not applied".
+sleep 3 # let the last background settlements land
+unsettled=$(grep -c 'not applied' state/logs/gateway.log || true)
+(( unsettled == 0 )) && ok "every hold settled (no 'not applied' in the purchasing gateway log)" \
+  || { bad "$unsettled settlement(s) did not land (their holds stay committed to the cap):"; grep 'not applied' state/logs/gateway.log | tail -n 5; }
 
 node - "$N" "$out/m5-perf${PERF_LABEL:+-$PERF_LABEL}.json" <<'NODE'
 const fs = require('fs');
@@ -75,7 +74,7 @@ const stats = (rows) => {
     mean: ok.length ? Math.round(ok.reduce((a, b) => a + b, 0) / ok.length) : null, max: round(ok.at(-1)), codes };
 };
 const paths = { 'openshell-only': stats(read('state/perf-a.txt')), 'metamynd-only': stats(read('state/perf-b.txt')), combined: stats(read('state/perf-c.txt')) };
-const options = { bundleTtlMs: Number(process.env.GW_BUNDLE_TTL_MS ?? 0), asyncCapture: process.env.GW_ASYNC_CAPTURE === '1' };
+const options = { settleInBackground: process.env.GW_SETTLE_IN_BACKGROUND !== '0', bundleTtlMs: Number(process.env.GW_BUNDLE_TTL_MS ?? 0) };
 fs.writeFileSync(process.argv[3], `${JSON.stringify({ at: new Date().toISOString(), perPath: n, options, paths }, null, 2)}\n`);
 console.log('path             n    201   p50    p95    p99    mean   max    statuses');
 for (const [k, s] of Object.entries(paths)) {

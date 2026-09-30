@@ -598,21 +598,27 @@ Findings:
 - **The enforcing gateway makes three metamynd.ai calls per purchase** (180 calls for 60 purchases), one after another. At about 0.3 s each, they are the rest of path (b) after authorize. Asynchronous capture, and removing or merging the third call, in `agentsafe-http-gateway` is the lever.
 - **The mock API closes each connection** (`Connection: close`). On loopback this costs nothing.
 - **Burst failures are not covered.** This run was sequential. Under a burst, Node opens one connection per concurrent request, so parallel handshakes remain a candidate for the `fetch failed` rate. Trace a matrix run to check.
-## Gateway latency options (bundle cache, deferred capture)
+## Gateway settlement and the policy-bundle cache
 
-Both are off by default. The adversarial matrix and the evidence run use the gateway as audited.
+Since `agentsafe-http-gateway` 0.16.0 (MetaMynd release `v1.72.1`, 30 Sep 2026), the purchasing gateway answers as soon as the upstream returns and settles the hold after (`settleInBackground`, the package default). The claim still happens before the upstream call.
+
+- **Transient failures** (issuer unreachable, 5xx, 429) are retried after 0.5 s and 2 s. A refusal such as `NOT_HELD` is final.
+- **Every settlement that doesn't land is logged** as `capture of <id> not applied (…)`. Its hold stays committed to the cap: it over-counts, never under-counts.
+- **On shutdown,** `main.mjs` waits up to 10 s for settlements still running (`drainSettlements`). The package's stock `server.mjs` does the same, but this gateway runs its own server, so it has to call it itself.
 
 | Variable | Effect | Trade-off |
 | --- | --- | --- |
-| `GW_BUNDLE_TTL_MS=30000` | Caches each agent's signed policy bundle for 30 s, through the guard's `fetchBundle` hook, instead of fetching it on every request. The signature and staleness checks still run per request | The gateway's own containment check lags by up to the TTL. The adapter's authorize and the claim still check live state on every purchase |
-| `GW_ASYNC_CAPTURE=1` | Answers once the upstream returns, then captures in the background. Transient failures are retried up to 3 times, each result is logged as `deferred_capture`, and in-flight captures get 10 s to drain on shutdown | A failed capture leaves the hold claimed and committed to the cap, and it is logged for reconciliation. The purchase has already executed |
+| `GW_SETTLE_IN_BACKGROUND=0` | Settles before answering, as before 0.16.0. Used as the comparison baseline | One more round trip to metamynd.ai per purchase |
+| `GW_BUNDLE_TTL_MS=30000` | Caches each agent's signed policy bundle for 30 s, through the guard's `fetchBundle` hook, instead of fetching it on every request. The signature and staleness checks still run per request, and a failed fetch is never cached | The gateway's own containment check lags by up to the TTL. The adapter's authorize and the claim still check live state on every purchase |
 
-Measure them against a baseline:
+Measure each step:
 
 ```shell
-PERF_N=100 PERF_LABEL=baseline bash tools/m5-perf.sh
+GW_SETTLE_IN_BACKGROUND=0 PERF_N=100 PERF_LABEL=settle-first bash tools/m5-perf.sh
+PERF_N=100 PERF_LABEL=settle-after bash tools/m5-perf.sh
 GW_BUNDLE_TTL_MS=30000 PERF_N=100 PERF_LABEL=bundle-cache bash tools/m5-perf.sh
-GW_BUNDLE_TTL_MS=30000 GW_ASYNC_CAPTURE=1 PERF_N=100 PERF_LABEL=optimized bash tools/m5-perf.sh
 ```
 
-Results go to `docs/report/runs/m5-perf-<label>.json`. With `GW_ASYNC_CAPTURE=1`, the script checks that every background capture settled.
+Results go to `docs/report/runs/m5-perf-<label>.json`. Each run also checks the purchasing gateway log for settlements that did not land.
+
+The adversarial matrix and the evidence run were last run on gateway 0.15.0, which settled before answering. Rerun them on 0.16.0 before relying on them.
