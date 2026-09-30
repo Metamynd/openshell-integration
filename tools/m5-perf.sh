@@ -4,7 +4,9 @@
 #   (a) openshell-only  sandbox -> OpenShell (L4/TLS/L7/credential) -> purchasing gateway without MetaMynd checks
 #   (b) metamynd-only   agent A -> metamynd.ai authorize -> enforcing purchasing gateway (no OpenShell)
 #   (c) combined        sandbox -> OpenShell -> MetaMynd adapter (authorize at metamynd.ai) -> enforcing gateway
-# Writes docs/report/runs/m5-perf.json. Each sandbox is warmed first (OpenShell's first-credential reload).
+# Writes docs/report/runs/m5-perf[-$PERF_LABEL].json. Each sandbox is warmed first (OpenShell's first-credential reload).
+# Gateway latency options pass through the environment (packages/purchasing-gateway/src/latency.mjs):
+#   GW_BUNDLE_TTL_MS=30000 GW_ASYNC_CAPTURE=1 PERF_LABEL=optimized bash tools/m5-perf.sh
 set -uo pipefail
 cd "$(dirname "$0")/.."
 . tools/lib/poc-env.sh
@@ -39,7 +41,7 @@ bind_sandbox "$sb_mm" A >/dev/null || die "bind"
 loop_in "$sb_os" 1 >/dev/null
 loop_in "$sb_mm" 1 >/dev/null
 sleep 8
-ok "ready: $N purchases per path"
+ok "ready: $N purchases per path; gateway options: bundle cache ${GW_BUNDLE_TTL_MS:-0} ms, async capture ${GW_ASYNC_CAPTURE:-0}"
 
 echo "== (a) openshell-only"
 loop_in "$sb_os" "$N" > state/perf-a.txt
@@ -51,8 +53,15 @@ NODE_EXTRA_CA_CERTS=state/certs/ca.pem PURCHASING_API_TOKEN=$(cat state/purchasi
   node packages/poc-cli/bin/perf-native.mjs > state/perf-b.txt
 echo "== (c) combined"
 loop_in "$sb_mm" "$N" > state/perf-c.txt
+if [[ "${GW_ASYNC_CAPTURE:-}" == 1 ]]; then
+  sleep 3 # let the last background captures land
+  cap_ok=$(grep -c '"event":"deferred_capture".*"ok":true' state/logs/gateway.log || true)
+  cap_bad=$(grep -c '"event":"deferred_capture".*"ok":false' state/logs/gateway.log || true)
+  (( cap_bad == 0 )) && ok "deferred captures: $cap_ok settled, 0 failed" \
+    || { bad "deferred captures: $cap_ok settled, $cap_bad failed (holds stay committed to the cap):"; grep '"event":"deferred_capture".*"ok":false' state/logs/gateway.log | tail -n 5; }
+fi
 
-node - "$N" <<'NODE'
+node - "$N" "$out/m5-perf${PERF_LABEL:+-$PERF_LABEL}.json" <<'NODE'
 const fs = require('fs');
 const n = Number(process.argv[2]);
 const read = (f) => fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => { const [s, c] = l.split(' '); return { ms: Number(s) * 1000, code: c }; });
@@ -66,7 +75,8 @@ const stats = (rows) => {
     mean: ok.length ? Math.round(ok.reduce((a, b) => a + b, 0) / ok.length) : null, max: round(ok.at(-1)), codes };
 };
 const paths = { 'openshell-only': stats(read('state/perf-a.txt')), 'metamynd-only': stats(read('state/perf-b.txt')), combined: stats(read('state/perf-c.txt')) };
-fs.writeFileSync('docs/report/runs/m5-perf.json', `${JSON.stringify({ at: new Date().toISOString(), perPath: n, paths }, null, 2)}\n`);
+const options = { bundleTtlMs: Number(process.env.GW_BUNDLE_TTL_MS ?? 0), asyncCapture: process.env.GW_ASYNC_CAPTURE === '1' };
+fs.writeFileSync(process.argv[3], `${JSON.stringify({ at: new Date().toISOString(), perPath: n, options, paths }, null, 2)}\n`);
 console.log('path             n    201   p50    p95    p99    mean   max    statuses');
 for (const [k, s] of Object.entries(paths)) {
   console.log(`${k.padEnd(16)} ${String(s.n).padEnd(4)} ${String(s.ok).padEnd(5)} ${String(s.p50).padEnd(6)} ${String(s.p95).padEnd(6)} ${String(s.p99).padEnd(6)} ${String(s.mean).padEnd(6)} ${String(s.max).padEnd(6)} ${JSON.stringify(s.codes)}`);
