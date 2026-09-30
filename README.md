@@ -8,7 +8,7 @@ This is a POC built on public, released extension points. It is not a claim of p
 
 ## Status
 
-The POC is complete through M5 on one host (OpenShell `v0.1.2`, metamynd.ai `v1.71.0`, WSL2). A governed purchase from an OpenShell sandbox:
+The POC is complete through M5 on one host (OpenShell `v0.1.2`, metamynd.ai `v1.71.0`, latency re-measured on `v1.72.0`, WSL2). A governed purchase from an OpenShell sandbox:
 1. is authorized at metamynd.ai as the agent bound to that sandbox;
 2. has its credential substituted by OpenShell;
 3. is re-verified and settled by MetaMynd's purchasing gateway;
