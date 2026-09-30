@@ -26,12 +26,12 @@
     },
     "service": {
       "apiBase": "https://metamynd.ai/api/v1",
-      "release": "v1.72.0",
-      "note": "hosted instance the POC targets. M0-M4 ran on v1.71.0 (contains #785); v1.72.0 (asynchronous decision path) was deployed on 30 Sep 2026 and the M5 latency re-measured on it. MetaMynd holds the Hedera operator account."
+      "release": "v1.72.2",
+      "note": "hosted instance the POC targets. M0-M4 ran on v1.71.0 (contains #785); v1.72.0 (asynchronous decision path) was deployed on 30 Sep 2026 and the M5 latency re-measured on it; v1.72.1 (agentsafe-http-gateway 0.16.0: answer first, settle after) and v1.72.2 (the SDKs keep idle connections for 60 s: guard 0.17.1, mcp-guard 0.17.2, http-gateway 0.16.1) followed the same day. MetaMynd holds the Hedera operator account."
     },
     "packages": {
       "@metamynd/agentsafe-guard": "0.17.x",
-      "@metamynd/agentsafe-http-gateway": "0.15.x",
+      "@metamynd/agentsafe-http-gateway": "0.16.x",
       "@metamynd/agentsafe-mcp-guard": "0.17.x",
       "@metamynd/agentsafe-signer": "0.19.x"
     }
