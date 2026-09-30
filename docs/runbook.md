@@ -580,3 +580,21 @@ node tools/lib/conn-trace.mjs --report state/conn-trace
 `tools/lib/conn-trace.mjs` is preloaded into every Node process the script starts: the adapter, the purchasing gateway and the latency client. Using Node's built-in `diagnostics_channel` events from `fetch`, it counts new TCP/TLS connections against requests for each origin. It also records the median handshake time and the server's `connection` and `keep-alive` headers. It records no bodies, paths or other header values. `reuse` near 0% means a new connection per request.
 
 What a local probe showed on 30 Sep 2026 (from a laptop, not the POC host): metamynd.ai answers `Connection: keep-alive` with no `Keep-Alive` timeout. So Node's `fetch` reuses a connection only while it has been idle for less than its default of about 4 s. Five requests 0.3 s apart used 1 connection; three requests 6 s apart used 3.
+### Result: 30 Sep 2026 on COO-JASIM-NB1 (`PERF_N=30`, traced)
+
+Latency matched the untraced run (combined p50 1453 ms, MetaMynd-only 1340 ms, OpenShell-only 49 ms). Connection reuse:
+
+| Process | Origin | Requests | Connections | Reuse | Handshake (median) |
+| --- | --- | --- | --- | --- | --- |
+| Adapter | metamynd.ai | 31 | 2 | 94% | 213 ms |
+| Purchasing gateway (enforcing, paths b and c) | metamynd.ai | 180 | 1 | 99% | 211 ms |
+| Latency client (path b) | metamynd.ai | 30 | 1 | 97% | 347 ms |
+| Latency client (path b) | purchasing gateway | 30 | 1 | 97% | 14 ms |
+| Purchasing gateway (both runs) | mock purchasing API (loopback) | 92 | 92 | 0% | 0 ms |
+
+Findings:
+- **The POC already reuses its connections to metamynd.ai.** Every process calls Node's built-in `fetch` and reads every response body, so claim and capture run over a warm connection. Adding a connection pool would not change the back-to-back numbers.
+- **A fresh connection from the POC host costs about 210 ms.** It is paid only after about 4 s idle, because metamynd.ai sends no `Keep-Alive` timeout. A longer client keep-alive, or a `Keep-Alive: timeout=…` header from metamynd.ai, would save it for sporadic traffic and for the demo's pauses.
+- **The enforcing gateway makes three metamynd.ai calls per purchase** (180 calls for 60 purchases), one after another. At about 0.3 s each, they are the rest of path (b) after authorize. Asynchronous capture, and removing or merging the third call, in `agentsafe-http-gateway` is the lever.
+- **The mock API closes each connection** (`Connection: close`). On loopback this costs nothing.
+- **Burst failures are not covered.** This run was sequential. Under a burst, Node opens one connection per concurrent request, so parallel handshakes remain a candidate for the `fetch failed` rate. Trace a matrix run to check.
