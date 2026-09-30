@@ -8,6 +8,9 @@ OPENSHELL_JWT_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/openshell/tls/jwt"
 PCA_IMAGE="local/openshell-supervisor:0.1.2-pca"
 PCA_BASE="ghcr.io/nvidia/openshell/supervisor:0.1.2"
 SMOKE_IMAGE="mm-poc-smoke:0.1"
+# First line of every gateway.toml these scripts write; tools/poc-reset.sh removes only a file that carries it
+# (or the older, unmarked POC registration).
+GATEWAY_CFG_MARKER="# written by the openshell-integration POC scripts (tools/lib/openshell.sh)"
 WROTE_GATEWAY_CFG=0
 
 wait_gateway() {
@@ -22,11 +25,13 @@ wait_gateway() {
 # supervisor image that trusts the POC CA. Refuses to touch a gateway.toml it did not create.
 write_gateway_cfg() {
   if [[ -e "$GATEWAY_CFG" ]]; then
-    echo "FAIL  $GATEWAY_CFG already exists; these scripts only manage a gateway.toml they create. Move it aside and re-run."
+    echo "FAIL  $GATEWAY_CFG already exists; these scripts only manage a gateway.toml they create."
+    echo "      If an earlier POC run was interrupted, run: bash tools/poc-reset.sh"
     return 1
   fi
   mkdir -p "$(dirname "$GATEWAY_CFG")"
   cat > "$GATEWAY_CFG" <<EOF
+$GATEWAY_CFG_MARKER
 [openshell]
 version = 2
 

@@ -50,7 +50,7 @@ flowchart LR
 | Mock purchasing API | An idempotent ledger with one row per `authorizationId` | `packages/mock-purchasing` |
 | Enrolment and tooling | BYOK testnet agents with daemon-held keys, counterparty registration, the stack, the matrix, evidence and latency harnesses | `packages/poc-cli`, `tools/` |
 
-**Versions:** OpenShell `v0.1.2` (`6648bd0c`). MetaMynd `metamynd.ai` release `v1.71.0` (latency re-measured on `v1.72.0`). `@metamynd/agentsafe-guard@0.17.0`, `agentsafe-http-gateway@0.15.0`, `agentsafe-mcp-guard@0.17.1`, `agentsafe-signer@0.19.1`. Host: Windows 11 with WSL2 Ubuntu 24.04, kernel 6.18, Docker Engine 29.8.1, Node 24 (see `versions.lock`).
+**Versions:** OpenShell `v0.1.2` (`6648bd0c`). MetaMynd `metamynd.ai` release `v1.71.0` (latency re-measured on `v1.72.0`). `@metamynd/agentsafe-guard@0.17.0`, `agentsafe-http-gateway@0.15.0` (0.16.0 from 30 Sep 2026), `agentsafe-mcp-guard@0.17.1`, `agentsafe-signer@0.19.1`. Host: Windows 11 with WSL2 Ubuntu 24.04, kernel 6.18, Docker Engine 29.8.1, Node 24 (see `versions.lock`).
 
 ## Results
 
@@ -101,7 +101,18 @@ Measured on 30 Sep 2026 against metamynd.ai `v1.72.0`, which made MetaMynd's dec
 | Combined | 1410 ms | 1868 ms | 2309 ms | 3024 ms |
 | Authorize alone, allow (20 calls) | 358 ms | 643 ms | – | 1213 ms |
 
-OpenShell adds about 50 ms and the adapter about 50 ms. An approval now costs about the same as a refusal (358 ms against 339 ms), and authorize's p95 leaves wide headroom under the adapter's 4 s deadline. Most of the remaining time is the purchasing gateway's claim and capture calls to metamynd.ai, which the published `agentsafe-http-gateway@0.15.0` still makes one after the other.
+OpenShell adds about 50 ms and the adapter about 50 ms. An approval now costs about the same as a refusal (358 ms against 339 ms), and authorize's p95 leaves wide headroom under the adapter's 4 s deadline.
+
+The purchasing gateway then made three calls to metamynd.ai per purchase, one after another: the agent's policy bundle (fetched on every request), the claim, and the capture. Tracing showed its connections were already reused, so only the claim has to precede the purchase. MetaMynd then shipped two changes the same day: `v1.72.1` (`agentsafe-http-gateway` 0.16.0) answers first and settles the hold after, and `v1.72.2` makes the SDKs keep idle connections for 60 s. Cloudflare strips the `Keep-Alive` header, so Node's built-in `fetch` had been dropping idle connections after 4 s. The POC added an opt-in 30 s policy-bundle cache. Measured on `v1.72.2`:
+
+| Combined path (100 purchases) | p50 | p95 | p99 |
+| --- | --- | --- | --- |
+| Settling before answering (`GW_SETTLE_IN_BACKGROUND=0`) | 1617 ms | 4590 ms | 6224 ms |
+| Answering first, settling after (the default since `v1.72.1`) | 1144 ms | 1302 ms | 1586 ms |
+| … plus the POC's 30 s policy-bundle cache (`GW_BUNDLE_TTL_MS`) | **839 ms** | **1051 ms** | **1286 ms** |
+
+- **The combined path is 72% faster than the first measurement** (3024 ms p50). Settling after the answer saves about 0.3–0.5 s, and the bundle cache about 0.3 s. Every run settled every hold.
+- **Tails vary from run to run.** Across the runs of 30 Sep, a wide tail (p99 2.1–7.5 s) appeared in one configuration or another, not consistently in any one. In this set it was the settle-first run. A connection trace ruled out connection churn: the gateway made 180 metamynd.ai calls over one connection. So the tails most likely come from the network path to metamynd.ai or from its load. Median figures are stable; p95 and p99 need repeated runs before any claim.
 
 ## Findings
 
@@ -127,7 +138,7 @@ OpenShell adds about 50 ms and the adapter about 50 ms. An approval now costs ab
 
 ### MetaMynd
 
-1. **Latency.** On `v1.71.0` the three round trips per purchase (authorize, claim, capture) cost about 1 s each from Malaysia, and a permit cost about 0.8 s more than a deny. `v1.72.0` made the decision path asynchronous: authorize dropped to 358 ms p50, permits now cost the same as denies, and the combined path fell from 3.0 s to 1.4 s p50. The next step is asynchronous capture in `agentsafe-http-gateway`, since the upstream response does not depend on it, then a nearer region.
+1. **Latency.** On `v1.71.0` the three round trips per purchase (authorize, claim, capture) cost about 1 s each from Malaysia, and a permit cost about 0.8 s more than a deny. `v1.72.0` made the decision path asynchronous: authorize dropped to 358 ms p50, permits now cost the same as denies, and the combined path fell from 3.0 s to 1.4 s p50. `v1.72.1` (`agentsafe-http-gateway` 0.16.0) then settled holds after answering, `v1.72.2` made the SDKs keep idle connections for 60 s, and the POC's policy-bundle cache removed the per-request bundle fetch: combined p50 839 ms, p99 1286 ms. Next: caching with push invalidation in the service guard itself (the agent guard already does this), and a nearer region.
 2. **Availability under bursts.** About 10–15% of calls under 20-way concurrency failed at the network level (`fetch failed`), both at authorize and at claim. Every one failed closed. The cause, client-side or server-side, is not yet diagnosed.
 3. **Spend-anomaly floor** (`SPEND_ANOMALY_MODE=on`): it escalates amounts above mean + 4 sd, or 4× a uniform mean, of the agent's last 20 purchases. This is a strong behavioural control, but it needs to be documented for integrators: test traffic at one scale changes what later amounts are allowed.
 4. **Identity model.** On the decision path, MetaMynd accepts only the agent DID's own signature. The adapter therefore custodies each sandbox agent's key in `agentsafe-signer`. What the signature proves is *"the supervisor observed this request from sandbox S, and S's bound agent is authorized for it"*. It does not prove the agent's own intent. A formal "supervisor-custodied key" assurance tier would make this explicit.
@@ -147,7 +158,7 @@ OpenShell adds about 50 ms and the adapter about 50 ms. An approval now costs ab
 2. With the OpenShell maintainers, starting in GitHub Discussions and subject to the project's vouch process:
    - share the reload reproduction and the `request_id` request;
    - ask whether supervisor middleware is the intended long-term seam for external authorization, and about its path out of research preview.
-3. With the MetaMynd team: publish asynchronous capture in `agentsafe-http-gateway`, raise the burst-availability item, document the anomaly floor for integrators, and add an assurance tier for supervisor-custodied keys.
+3. With the MetaMynd team: add policy-bundle caching with push invalidation to `agentsafe-mcp-guard`, export `keepAliveFetch` (the bundle cache cannot use it yet), look at the run-to-run latency tail and the burst-availability item, document the anomaly floor for integrators, and add an assurance tier for supervisor-custodied keys.
 4. Record the five-minute demo below with `tools/demo.sh`.
 
 ## Demo (five minutes)

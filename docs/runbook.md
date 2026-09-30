@@ -32,6 +32,21 @@ The POC runs on **COO-JASIM-NB1**, in Windows 11 + WSL2 Ubuntu 24.04. The repo i
 
 If you forget the WSL `sudo` password, reset it from Windows PowerShell with `wsl -u root passwd <user>`.
 
+## Recovering from an interrupted run
+
+Every POC script cleans up on exit. A run that is killed hard, or whose terminal closes, can leave behind the POC's `gateway.toml`, the `poc-purchasing` provider and its profile, sandboxes and stack processes. The next run then refuses to start. To see what would be removed, then remove it:
+
+```shell
+bash tools/poc-reset.sh --dry-run
+bash tools/poc-reset.sh
+```
+
+It removes only what the POC scripts create:
+- sandboxes named `m0-…` to `m5-…` or `demo-agent-…`, and their adapter bindings;
+- the `poc-purchasing` and `m0-purchasing` providers and their profiles;
+- the adapter, watcher and stub processes, and the POC stack.
+
+It removes `~/.config/openshell/gateway.toml` only if the POC scripts wrote it: the file carries their marker line, or the older POC registration of `metamynd` with the POC supervisor image. It then restarts the gateway on its defaults. Any other `gateway.toml` is left alone. The script refuses to run while a POC script is still running.
 ## M0 smoke test (build plan step 0.3)
 
 ```shell
@@ -569,3 +584,100 @@ The runner sets up the stack with sandboxes `demo-agent-a` and `demo-agent-b`, w
 **R7 fix (30 Sep 2026).** R7 used to send its `/dev/tcp` probe through `sh`, which is dash in the sandbox image. Dash has no `/dev/tcp`, so R7 printed "refused" without testing OpenShell. R7 and the demo now use `bash`, and R7 fails if the probe does not run. **Verified on 30 Sep 2026** (verify-only, sandboxes `3d20b95b…` and `7e879ef1…`): OpenShell refused the raw TCP connection from `bash`, and every other row passed again. Burst availability was 6/10, with no empty replies and no stale drops, and the ledger delta equalled the 201s.
 
 **Rehearsal, 30 Sep 2026.** `DEMO_AUTO=3 bash tools/demo.sh` ran all nine scenes with no operator-check mismatches. Exactly one purchase executed (scene 3); the RM100 case in scene 6 did not execute.
+## Connection reuse to metamynd.ai
+
+```shell
+rm -rf state/conn-trace
+CONN_TRACE_DIR=state/conn-trace NODE_OPTIONS="--import=$PWD/tools/lib/conn-trace.mjs" PERF_N=30 bash tools/m5-perf.sh
+node tools/lib/conn-trace.mjs --report state/conn-trace
+```
+
+`tools/lib/conn-trace.mjs` is preloaded into every Node process the script starts: the adapter, the purchasing gateway and the latency client. Using Node's built-in `diagnostics_channel` events from `fetch`, it counts new TCP/TLS connections against requests for each origin. It also records the median handshake time and the server's `connection` and `keep-alive` headers. It records no bodies, paths or other header values. `reuse` near 0% means a new connection per request.
+
+What a local probe showed on 30 Sep 2026 (from a laptop, not the POC host): metamynd.ai answers `Connection: keep-alive` with no `Keep-Alive` timeout. So Node's `fetch` reuses a connection only while it has been idle for less than its default of about 4 s. Five requests 0.3 s apart used 1 connection; three requests 6 s apart used 3.
+### Result: 30 Sep 2026 on COO-JASIM-NB1 (`PERF_N=30`, traced)
+
+Latency matched the untraced run (combined p50 1453 ms, MetaMynd-only 1340 ms, OpenShell-only 49 ms). Connection reuse:
+
+| Process | Origin | Requests | Connections | Reuse | Handshake (median) |
+| --- | --- | --- | --- | --- | --- |
+| Adapter | metamynd.ai | 31 | 2 | 94% | 213 ms |
+| Purchasing gateway (enforcing, paths b and c) | metamynd.ai | 180 | 1 | 99% | 211 ms |
+| Latency client (path b) | metamynd.ai | 30 | 1 | 97% | 347 ms |
+| Latency client (path b) | purchasing gateway | 30 | 1 | 97% | 14 ms |
+| Purchasing gateway (both runs) | mock purchasing API (loopback) | 92 | 92 | 0% | 0 ms |
+
+Findings:
+- **The POC already reuses its connections to metamynd.ai.** Every process calls Node's built-in `fetch` and reads every response body, so claim and capture run over a warm connection. Adding a connection pool would not change the back-to-back numbers.
+- **A fresh connection from the POC host costs about 210 ms.** It is paid only after about 4 s idle, because metamynd.ai sends no `Keep-Alive` timeout. A longer client keep-alive, or a `Keep-Alive: timeout=…` header from metamynd.ai, would save it for sporadic traffic and for the demo's pauses.
+- **The enforcing gateway makes three metamynd.ai calls per purchase** (180 calls for 60 purchases), one after another. At about 0.3 s each, they are the rest of path (b) after authorize. Asynchronous capture, and removing or merging the third call, in `agentsafe-http-gateway` is the lever.
+- **The mock API closes each connection** (`Connection: close`). On loopback this costs nothing.
+- **Burst failures are not covered.** This run was sequential. Under a burst, Node opens one connection per concurrent request, so parallel handshakes remain a candidate for the `fetch failed` rate. Trace a matrix run to check.
+## Gateway settlement and the policy-bundle cache
+
+Since `agentsafe-http-gateway` 0.16.0 (MetaMynd release `v1.72.1`, 30 Sep 2026), the purchasing gateway answers as soon as the upstream returns and settles the hold after (`settleInBackground`, the package default). The claim still happens before the upstream call.
+
+- **Transient failures** (issuer unreachable, 5xx, 429) are retried after 0.5 s and 2 s. A refusal such as `NOT_HELD` is final.
+- **Every settlement that doesn't land is logged** as `capture of <id> not applied (…)`. Its hold stays committed to the cap: it over-counts, never under-counts.
+- **On shutdown,** `main.mjs` waits up to 10 s for settlements still running (`drainSettlements`). The package's stock `server.mjs` does the same, but this gateway runs its own server, so it has to call it itself.
+
+| Variable | Effect | Trade-off |
+| --- | --- | --- |
+| `GW_SETTLE_IN_BACKGROUND=0` | Settles before answering, as before 0.16.0. Used as the comparison baseline | One more round trip to metamynd.ai per purchase |
+| `GW_BUNDLE_TTL_MS=30000` | Caches each agent's signed policy bundle for 30 s, through the guard's `fetchBundle` hook, instead of fetching it on every request. The signature and staleness checks still run per request, and a failed fetch is never cached | The gateway's own containment check lags by up to the TTL. The adapter's authorize and the claim still check live state on every purchase |
+
+Measure each step:
+
+```shell
+GW_SETTLE_IN_BACKGROUND=0 PERF_N=100 PERF_LABEL=settle-first bash tools/m5-perf.sh
+PERF_N=100 PERF_LABEL=settle-after bash tools/m5-perf.sh
+GW_BUNDLE_TTL_MS=30000 PERF_N=100 PERF_LABEL=bundle-cache bash tools/m5-perf.sh
+```
+
+Results go to `docs/report/runs/m5-perf-<label>.json`. Each run also checks the purchasing gateway log for settlements that did not land.
+
+The adversarial matrix and the evidence run were last run on gateway 0.15.0, which settled before answering. Rerun them on 0.16.0 before relying on them.
+### Result: 30 Sep 2026 on COO-JASIM-NB1 (gateway 0.16.0, 100 sequential RM1 purchases per path, all holds settled)
+
+| Run | MetaMynd only p50 / p95 / p99 | Combined p50 / p95 / p99 | Combined max | Statuses |
+| --- | --- | --- | --- | --- |
+| `settle-first` (`GW_SETTLE_IN_BACKGROUND=0`) | 1453 / 1952 / 2462 ms | 1534 / 2057 / 2124 ms | 2334 ms | all 201 |
+| `settle-after` (0.16.0 default) | 1113 / 1832 / 2919 ms | 1217 / 3215 / 7521 ms | 7521 ms | 99 × 201, 1 × `000` |
+| `bundle-cache` (settle after + `GW_BUNDLE_TTL_MS=30000`) | 825 / 1765 / 2531 ms | 898 / 2332 / 4298 ms | 11245 ms | all 201 |
+
+OpenShell-only stayed at 49–50 ms p50 in every run. Every run found no settlement that failed to land.
+
+Findings:
+- **Each change saves about 0.3 s at the median, and the savings add up.** Settling after the answer took 317–340 ms off, and the bundle cache another 288–319 ms. Combined p50 went 1534 → 898 ms (−41%). Against the first measurement on `v1.71.0` (3024 ms) it is −70%.
+- **The slow tail got worse.** Combined p95 and p99 rose (up to 3.2 s and 7.5 s), the worst case was 11 s, and one request got no response (`000`). A likely cause, not yet confirmed: each background settlement now overlaps the next purchase's calls to metamynd.ai. Node then opens a second connection per overlap, which costs about 210 ms per handshake, plus any extra load on the server. Next step: rerun `settle-after` with the connection tracer (`tools/lib/conn-trace.mjs`) and compare connection counts with the settle-first run.
+- **The median figures are ready to use; the tails need that follow-up** before any p95 or p99 claim.
+
+**Matrix on 0.16.0 (verify-only), same day.** Rows R1–R19, R21 and R22 passed, including R7, the burst (ledger delta equalled the 201s, 9/10 available) and the outage and lifecycle rows. R20 got `metamynd_gate_unreachable` instead of `metamynd_sop_spend_cap`: an availability failure reaching metamynd.ai, refused with the ledger at +0. Rows that expect a MetaMynd *denial* (R2, R3, R4, R6, R20) now retry availability failures the same way the allow rows already did (`attempt_retry`). Each retry prints a `note` line.
+### MetaMynd v1.72.2: 60 s keep-alive in the SDKs (30 Sep 2026)
+
+metamynd.ai sits behind Cloudflare, which strips the `Keep-Alive` header. So Node's built-in `fetch` dropped idle connections after 4 s, and any call after a pause paid a new handshake. `v1.72.2` (`agentsafe-guard` 0.17.1, `agentsafe-mcp-guard` 0.17.2, `agentsafe-http-gateway` 0.16.1) replaces it with `keepAliveFetch`, built on `node:https` agents that keep idle connections for 60 s. The POC moved to these versions.
+
+- `tools/lib/conn-trace.mjs` now also traces `node:http` and `https` (the `via` column). There, a request on a pooled socket reports `reusedSocket`, and every other request counts as a new connection. Handshake time is only measured on the `fetch` path.
+- A local check (a laptop, not the POC host), with three calls to metamynd.ai 6 s apart: **1** connection, against 3 with the built-in `fetch`.
+- The POC's policy-bundle cache still uses the built-in `fetch`, because `keepAliveFetch` is not exported. Its refresh, once per agent per 30 s, pays one handshake.
+### Result: full retest on v1.72.2, 30 Sep 2026 on COO-JASIM-NB1 (gateway 0.16.1, 60 s keep-alive SDKs)
+
+Latency, 100 sequential RM1 purchases per path, all 201, every hold settled:
+
+| Run | MetaMynd only p50 / p95 / p99 | Combined p50 / p95 / p99 | Combined max |
+| --- | --- | --- | --- |
+| `settle-first` | 1636 / 3543 / 4742 ms | 1617 / 4590 / 6224 ms | 6670 ms |
+| `settle-after` | 1106 / 1360 / 1563 ms | 1144 / 1302 / 1586 ms | 1623 ms |
+| `bundle-cache` | 820 / 1678 / 1956 ms | **839 / 1051 / 1286 ms** | 2718 ms |
+
+OpenShell-only held at 46–48 ms p50.
+
+Connection trace (`PERF_N=30`, settle after): the adapter made 31 metamynd.ai calls over 1 connection, the enforcing gateway **180 over 1**, and the latency client 30 over 1, all through `node:http` (`keepAliveFetch`), 97–99% reuse. Background settlements did not add connections.
+
+Findings:
+- **Best configuration: combined p50 839 ms, p99 1286 ms**, 72% below the first measurement (3024 ms p50, 29 Sep, `v1.71.0`).
+- **The tail varies from run to run and is not caused by settling after the answer.** Earlier today the settle-after run had the wide tail (p99 7.5 s). In this set the settle-first run did (p99 6.2 s), while both settle-after runs stayed tight. With connection churn ruled out by the trace, the likeliest source is the network path to metamynd.ai or its load. The earlier "overlapping settlements" explanation is withdrawn.
+
+Adversarial matrix (verify-only, sandboxes `62daa330…` and `94e36a48…`): **all 22 rows passed**, including R20 (`metamynd_sop_spend_cap`), R7 (raw TCP from `bash` refused) and the burst (10/10, ledger delta equal to the 201s).
+
+Evidence (`tools/m5-evidence.sh`): **6/6 decisions joined across all four sources**. OCSF 6/6; MetaMynd evidence record, trust-graph path and Merkle proof 6/6 each; ledger consistent 6/6, with exactly one row for each of the three allowed purchases.
