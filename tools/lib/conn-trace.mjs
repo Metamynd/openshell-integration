@@ -1,6 +1,8 @@
-// Connection tracer for Node's built-in fetch. Preload it into every POC process to count new TCP/TLS
-// connections against requests, per origin, with the handshake time and the server's connection and
-// keep-alive response headers. It answers: does a process reuse its connections to metamynd.ai?
+// Connection tracer for the POC processes. Preload it into every process to count new TCP/TLS connections
+// against requests, per origin, with the server's connection and keep-alive response headers. It answers:
+// does a process reuse its connections to metamynd.ai? It covers both transports the MetaMynd packages have
+// used: Node's built-in fetch (undici; handshake time too) and, since v1.72.2's keepAliveFetch, node:http/https
+// (a request on a reused socket reports reusedSocket; every other one opened a connection).
 //   CONN_TRACE_DIR=state/conn-trace NODE_OPTIONS="--import=$PWD/tools/lib/conn-trace.mjs" PERF_N=30 bash tools/m5-perf.sh
 //   node tools/lib/conn-trace.mjs --report state/conn-trace
 // Each traced process writes <dir>/conn-<pid>.json after every response. Records no URLs beyond the origin,
@@ -20,9 +22,9 @@ function trace(dir) {
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `conn-${process.pid}.json`);
   const proc = basename(process.argv[1] ?? 'node');
-  /** @type {Record<string, {requests: number, connections: number, connectMs: number[], connection: string[], keepAlive: string[]}>} */
+  /** @type {Record<string, {via: string, requests: number, connections: number, connectMs: number[], connection: string[], keepAlive: string[]}>} */
   const origins = {};
-  const at = (/** @type {string} */ o) => (origins[o] ??= { requests: 0, connections: 0, connectMs: [], connection: [], keepAlive: [] });
+  const at = (/** @type {string} */ o, via = 'fetch') => (origins[`${via} ${o}`] ??= { via, requests: 0, connections: 0, connectMs: [], connection: [], keepAlive: [] });
   /** @type {Map<string, number[]>} origin -> start times of connects in flight (the two events do not share an object) */
   const started = new Map();
   const originOf = (/** @type {any} */ p) => `${p.protocol}//${p.hostname}${p.port ? `:${p.port}` : ''}`;
@@ -52,6 +54,19 @@ function trace(dir) {
     }
     save();
   });
+
+  // node:http / node:https (keepAliveFetch in the MetaMynd packages since v1.72.2).
+  dc.subscribe('http.client.response.finish', (/** @type {any} */ m) => {
+    const req = m.request;
+    const host = String(req.getHeader?.('host') ?? req.host ?? '');
+    const o = at(`${req.protocol ?? 'http:'}//${host}`, 'node:http');
+    o.requests++;
+    if (!req.reusedSocket) o.connections++;
+    const h = m.response?.headers ?? {};
+    if (h.connection) note(o.connection, String(h.connection));
+    if (h['keep-alive']) note(o.keepAlive, String(h['keep-alive']));
+    save();
+  });
 }
 
 /** @param {string} dir */
@@ -60,14 +75,15 @@ function report(dir) {
   const rows = [];
   for (const f of readdirSync(dir).filter((n) => /^conn-\d+\.json$/.test(n))) {
     const { pid, proc, origins } = JSON.parse(readFileSync(join(dir, f), 'utf8'));
-    for (const [origin, o] of Object.entries(origins)) {
+    for (const [key, o] of Object.entries(origins)) {
       if (!o.requests && !o.connections) continue;
-      rows.push({ proc, pid, origin, requests: o.requests, connections: o.connections,
+      const origin = key.slice(key.indexOf(' ') + 1);
+      rows.push({ proc, pid, via: o.via ?? 'fetch', origin, requests: o.requests, connections: o.connections,
         reuse: o.requests ? `${Math.round(100 * (1 - o.connections / o.requests))}%` : '–',
         connectMs: median(o.connectMs), connection: o.connection.join(' | ') || '–', keepAlive: o.keepAlive.join(' | ') || '–' });
     }
   }
   if (!rows.length) { console.log(`no traced requests in ${dir}`); return; }
   console.table(rows);
-  console.log('reuse = 1 - connections/requests. Near 0% means a new connection per request; connectMs is the median TCP+TLS handshake.');
+  console.log('reuse = 1 - connections/requests. Near 0% means a new connection per request. connectMs (fetch only) is the median TCP+TLS handshake.');
 }
