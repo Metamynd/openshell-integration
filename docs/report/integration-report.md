@@ -18,10 +18,11 @@ MetaMynd's authorization runs as an OpenShell v0.1.2 **supervisor middleware**. 
 
 - **Technical pass: met.**
   - Every intended purchase executed once.
-  - Zero unauthorized ledger writes across an 18-row adversarial matrix, run twice.
+  - Zero unauthorized ledger writes across a 22-row adversarial matrix, run in both modes.
   - Every tested outage failed closed.
   - Two agent identities ran through one adapter with no cross-attribution.
-  - The upstream secret never reached the sandbox or the adapter.
+  - The upstream secret never reached the sandbox or the adapter, and no agent key, signer socket or signer variable was visible from inside a sandbox.
+  - The same controls held from a second client (Python) as from curl.
   - Nothing was forked; OpenShell `v0.1.2` and published MetaMynd packages were used as released.
 - **Product pass: met.** MetaMynd enforced what OpenShell alone cannot express: live mandates with merchant and spend rules, human-approval escalation, a behavioural spend-anomaly floor, per-agent identity, and anchored evidence. OpenShell enforced what MetaMynd alone cannot: kernel-level egress capture regardless of client (shell, raw TCP, IP, port), credential isolation, and bypass resistance. Both decisions appear in one joined trace.
 - **Collaboration pass: ready.** There is a public-safe repository with synthetic data, supported extension points only, measured latency, and seven upstream issue drafts ([upstream/](upstream/)), one of them a reproducible bug.
@@ -64,7 +65,7 @@ flowchart LR
 - **Secret isolation:** the sandbox held only `openshell:resolve:env:…`; the real token never appeared in the sandbox, the adapter journal or the adapter log.
 - **Concurrency:** across every concurrent burst, ledger rows equalled the 201 responses exactly, with no cross-attribution across 26 journaled decisions.
 
-### Adversarial matrix (M4, 18 rows, run with the purchasing gateway enforcing and in verify-only)
+### Adversarial matrix (M4, 22 rows, run with the purchasing gateway enforcing and in verify-only)
 
 | Row | Attack or case | Result, both modes |
 | --- | --- | --- |
@@ -76,6 +77,8 @@ flowchart LR
 | R13 | Concurrent purchases from two sandboxes | Ledger delta = 201s |
 | R14–R16 | Adapter down; MetaMynd unreachable; purchasing gateway down | Fail-closed, no ledger row |
 | R17–R18 | Sandbox deleted; recreated under the same name | Binding revoked; new UUID unbound |
+| R19–R21 | The same requests from Python instead of curl: allowed, over cap, IP literal | Executed once; denied; blocked |
+| R22 | Looking for the agents' keys from inside each sandbox | No signer socket, host `state/` path or signer variable visible |
 
 **In verify-only mode the purchasing gateway performed no MetaMynd checks, and OpenShell plus the adapter alone blocked every attack.**
 
@@ -104,6 +107,7 @@ OpenShell adds about 50 ms and the adapter about 100 ms. The rest is three seque
 1. **A sandbox's first provider-credential use triggers a reload that drops in-flight requests.** Each sandbox reloads its provider environment once (`provider_env_changed:true`, `policy_changed:false`). The reload closes every in-flight L7 tunnel with an empty reply, including requests still inside middleware evaluation. `openshell sandbox exec --env` triggers the same reload.
    - Safety held throughout.
    - Availability of a sandbox's first burst dropped to 0–4/10, and recovered to 10/10 after a warm-up.
+   - A second binary's first use of the credential triggers it again: Python's first purchase, after curl had already used the credential, got an empty reply in 2 of 4 runs. A warm-up must cover every binary.
    - [Draft bug report](upstream/01-first-credential-reload-drops-inflight.md).
 2. **Middleware OCSF events carry no `request_id`**, so correlation needs the middleware's own journal and a time-window join. [Draft](upstream/02-request-id-in-middleware-ocsf.md).
 3. **The response hook does not fire when the upstream fails**, so a middleware cannot learn every outcome. Settlement was moved to the counterparty gateway. [Draft](upstream/03-completion-notification-hook.md).
