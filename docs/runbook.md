@@ -32,6 +32,21 @@ The POC runs on **COO-JASIM-NB1**, in Windows 11 + WSL2 Ubuntu 24.04. The repo i
 
 If you forget the WSL `sudo` password, reset it from Windows PowerShell with `wsl -u root passwd <user>`.
 
+## Recovering from an interrupted run
+
+Every POC script cleans up on exit. A run that is killed hard, or whose terminal closes, can leave behind the POC's `gateway.toml`, the `poc-purchasing` provider and its profile, sandboxes and stack processes. The next run then refuses to start. To see what would be removed, then remove it:
+
+```shell
+bash tools/poc-reset.sh --dry-run
+bash tools/poc-reset.sh
+```
+
+It removes only what the POC scripts create:
+- sandboxes named `m0-…` to `m5-…` or `demo-agent-…`, and their adapter bindings;
+- the `poc-purchasing` and `m0-purchasing` providers and their profiles;
+- the adapter, watcher and stub processes, and the POC stack.
+
+It removes `~/.config/openshell/gateway.toml` only if the POC scripts wrote it: the file carries their marker line, or the older POC registration of `metamynd` with the POC supervisor image. It then restarts the gateway on its defaults. Any other `gateway.toml` is left alone. The script refuses to run while a POC script is still running.
 ## M0 smoke test (build plan step 0.3)
 
 ```shell
