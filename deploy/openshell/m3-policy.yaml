@@ -21,8 +21,10 @@ network_policies:
         rules:
           - allow: { method: POST, path: /purchase-requests }
         credential_binding: { provider: poc-purchasing }
+    # Two clients, so the M4 matrix can show the middleware applies whichever one sends the request.
     binaries:
       - { path: /usr/bin/curl }
+      - { path: /usr/bin/python3.12 }
 
 network_middlewares:
   metamynd:
