@@ -660,3 +660,24 @@ metamynd.ai sits behind Cloudflare, which strips the `Keep-Alive` header. So Nod
 - `tools/lib/conn-trace.mjs` now also traces `node:http` and `https` (the `via` column). There, a request on a pooled socket reports `reusedSocket`, and every other request counts as a new connection. Handshake time is only measured on the `fetch` path.
 - A local check (a laptop, not the POC host), with three calls to metamynd.ai 6 s apart: **1** connection, against 3 with the built-in `fetch`.
 - The POC's policy-bundle cache still uses the built-in `fetch`, because `keepAliveFetch` is not exported. Its refresh, once per agent per 30 s, pays one handshake.
+### Result: full retest on v1.72.2, 30 Sep 2026 on COO-JASIM-NB1 (gateway 0.16.1, 60 s keep-alive SDKs)
+
+Latency, 100 sequential RM1 purchases per path, all 201, every hold settled:
+
+| Run | MetaMynd only p50 / p95 / p99 | Combined p50 / p95 / p99 | Combined max |
+| --- | --- | --- | --- |
+| `settle-first` | 1636 / 3543 / 4742 ms | 1617 / 4590 / 6224 ms | 6670 ms |
+| `settle-after` | 1106 / 1360 / 1563 ms | 1144 / 1302 / 1586 ms | 1623 ms |
+| `bundle-cache` | 820 / 1678 / 1956 ms | **839 / 1051 / 1286 ms** | 2718 ms |
+
+OpenShell-only held at 46–48 ms p50.
+
+Connection trace (`PERF_N=30`, settle after): the adapter made 31 metamynd.ai calls over 1 connection, the enforcing gateway **180 over 1**, and the latency client 30 over 1, all through `node:http` (`keepAliveFetch`), 97–99% reuse. Background settlements did not add connections.
+
+Findings:
+- **Best configuration: combined p50 839 ms, p99 1286 ms**, 72% below the first measurement (3024 ms p50, 29 Sep, `v1.71.0`).
+- **The tail varies from run to run and is not caused by settling after the answer.** Earlier today the settle-after run had the wide tail (p99 7.5 s). In this set the settle-first run did (p99 6.2 s), while both settle-after runs stayed tight. With connection churn ruled out by the trace, the likeliest source is the network path to metamynd.ai or its load. The earlier "overlapping settlements" explanation is withdrawn.
+
+Adversarial matrix (verify-only, sandboxes `62daa330…` and `94e36a48…`): **all 22 rows passed**, including R20 (`metamynd_sop_spend_cap`), R7 (raw TCP from `bash` refused) and the burst (10/10, ledger delta equal to the 201s).
+
+Evidence (`tools/m5-evidence.sh`): **6/6 decisions joined across all four sources**. OCSF 6/6; MetaMynd evidence record, trust-graph path and Merkle proof 6/6 each; ledger consistent 6/6, with exactly one row for each of the three allowed purchases.

@@ -25,7 +25,7 @@ If the last screen shows an **Operator check** block, a scene did not behave as 
 | 6 | 2:55–3:25 | RM100 → anomaly escalation | "RM100 is within every limit. But agent A has only ever spent RM1, so MetaMynd flags the jump for review. That's behaviour, not just rules." |
 | 7 | 3:25–4:05 | Raw TCP, IP address, direct port, Python | "Can the agent get around it? A raw connection from the shell: refused. The gateway by IP address, or the purchasing API directly: blocked. A different program, Python instead of curl: same MetaMynd decision. Every path goes through OpenShell." |
 | 8 | 4:05–4:35 | Evidence table | "And every decision leaves one trace across four sources: OpenShell's log, the adapter's journal, MetaMynd's evidence with its anchored Merkle proof, and the ledger." |
-| 9 | 4:35–5:00 | What each layer did | "OpenShell controls where an agent can go and keeps secrets out of its hands. MetaMynd decides whether a specific action is authorised, and by whom. Neither can do the other's job, and together a governed purchase takes about a second and a half. That's how agents earn the right to do real work." |
+| 9 | 4:35–5:00 | What each layer did | "OpenShell controls where an agent can go and keeps secrets out of its hands. MetaMynd decides whether a specific action is authorised, and by whom. Neither can do the other's job, and together a governed purchase takes about a second. That's how agents earn the right to do real work." |
 
 Scene 8 waits until 75 s have passed since the first purchase, so MetaMynd's evidence batch has anchored. At a normal pace no countdown shows; if one does, cut it.
 
