@@ -221,13 +221,15 @@ advance
 # ---------------------------------------------------------------- 9. close
 scene "What each layer did"
 executed=$(( $(ledger_count) - start_ledger ))
+if (( executed == 1 )); then executed_line="1 purchase executed during the demo, exactly once."
+else executed_line="$executed purchases executed during the demo, each exactly once."; fi
 cat <<EOF
   OpenShell:  contained both agents, kept the API token out of the sandbox,
               and refused every path that avoided the inspected route.
   MetaMynd:   decided each purchase against the agent's live mandate, the
               organisation's rules and the agent's behaviour, and escalated
               to a named person when required.
-  Together:   $executed purchase(s) executed during the demo, each exactly once.
+  Together:   $executed_line
               Nothing else reached the ledger.
 EOF
 echo
