@@ -638,3 +638,10 @@ Findings:
 - **The median figures are ready to use; the tails need that follow-up** before any p95 or p99 claim.
 
 **Matrix on 0.16.0 (verify-only), same day.** Rows R1–R19, R21 and R22 passed, including R7, the burst (ledger delta equalled the 201s, 9/10 available) and the outage and lifecycle rows. R20 got `metamynd_gate_unreachable` instead of `metamynd_sop_spend_cap`: an availability failure reaching metamynd.ai, refused with the ledger at +0. Rows that expect a MetaMynd *denial* (R2, R3, R4, R6, R20) now retry availability failures the same way the allow rows already did (`attempt_retry`). Each retry prints a `note` line.
+### MetaMynd v1.72.2: 60 s keep-alive in the SDKs (30 Sep 2026)
+
+metamynd.ai sits behind Cloudflare, which strips the `Keep-Alive` header. So Node's built-in `fetch` dropped idle connections after 4 s, and any call after a pause paid a new handshake. `v1.72.2` (`agentsafe-guard` 0.17.1, `agentsafe-mcp-guard` 0.17.2, `agentsafe-http-gateway` 0.16.1) replaces it with `keepAliveFetch`, built on `node:https` agents that keep idle connections for 60 s. The POC moved to these versions.
+
+- `tools/lib/conn-trace.mjs` now also traces `node:http` and `https` (the `via` column). There, a request on a pooled socket reports `reusedSocket`, and every other request counts as a new connection. Handshake time is only measured on the `fetch` path.
+- A local check (a laptop, not the POC host), with three calls to metamynd.ai 6 s apart: **1** connection, against 3 with the built-in `fetch`.
+- The POC's policy-bundle cache still uses the built-in `fetch`, because `keepAliveFetch` is not exported. Its refresh, once per agent per 30 s, pays one handshake.
