@@ -622,3 +622,19 @@ GW_BUNDLE_TTL_MS=30000 PERF_N=100 PERF_LABEL=bundle-cache bash tools/m5-perf.sh
 Results go to `docs/report/runs/m5-perf-<label>.json`. Each run also checks the purchasing gateway log for settlements that did not land.
 
 The adversarial matrix and the evidence run were last run on gateway 0.15.0, which settled before answering. Rerun them on 0.16.0 before relying on them.
+### Result: 30 Sep 2026 on COO-JASIM-NB1 (gateway 0.16.0, 100 sequential RM1 purchases per path, all holds settled)
+
+| Run | MetaMynd only p50 / p95 / p99 | Combined p50 / p95 / p99 | Combined max | Statuses |
+| --- | --- | --- | --- | --- |
+| `settle-first` (`GW_SETTLE_IN_BACKGROUND=0`) | 1453 / 1952 / 2462 ms | 1534 / 2057 / 2124 ms | 2334 ms | all 201 |
+| `settle-after` (0.16.0 default) | 1113 / 1832 / 2919 ms | 1217 / 3215 / 7521 ms | 7521 ms | 99 × 201, 1 × `000` |
+| `bundle-cache` (settle after + `GW_BUNDLE_TTL_MS=30000`) | 825 / 1765 / 2531 ms | 898 / 2332 / 4298 ms | 11245 ms | all 201 |
+
+OpenShell-only stayed at 49–50 ms p50 in every run. Every run found no settlement that failed to land.
+
+Findings:
+- **Each change saves about 0.3 s at the median, and the savings add up.** Settling after the answer took 317–340 ms off, and the bundle cache another 288–319 ms. Combined p50 went 1534 → 898 ms (−41%). Against the first measurement on `v1.71.0` (3024 ms) it is −70%.
+- **The slow tail got worse.** Combined p95 and p99 rose (up to 3.2 s and 7.5 s), the worst case was 11 s, and one request got no response (`000`). A likely cause, not yet confirmed: each background settlement now overlaps the next purchase's calls to metamynd.ai. Node then opens a second connection per overlap, which costs about 210 ms per handshake, plus any extra load on the server. Next step: rerun `settle-after` with the connection tracer (`tools/lib/conn-trace.mjs`) and compare connection counts with the settle-first run.
+- **The median figures are ready to use; the tails need that follow-up** before any p95 or p99 claim.
+
+**Matrix on 0.16.0 (verify-only), same day.** Rows R1–R19, R21 and R22 passed, including R7, the burst (ledger delta equalled the 201s, 9/10 available) and the outage and lifecycle rows. R20 got `metamynd_gate_unreachable` instead of `metamynd_sop_spend_cap`: an availability failure reaching metamynd.ai, refused with the ledger at +0. Rows that expect a MetaMynd *denial* (R2, R3, R4, R6, R20) now retry availability failures the same way the allow rows already did (`attempt_retry`). Each retry prints a `note` line.

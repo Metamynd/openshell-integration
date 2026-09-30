@@ -52,11 +52,12 @@ attempt() {
 journal_os_since() {
   cat state/journal/*.jsonl 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=s.split("\n").filter(Boolean).map(JSON.parse).filter(x=>x.kind==="request"&&x.sandboxId===process.argv[1]&&x.ts>=process.argv[2]).at(-1);if(r&&r.osReasonCode)console.log(r.osReasonCode)})' "$1" "$2"
 }
-# attempt_allow: like attempt, but retries (up to 2 more times) on an availability failure, which fails
+# attempt_retry: like attempt, but retries (up to 2 more times) on an availability failure, which fails
+# (used by every row whose expected outcome needs MetaMynd's verdict, allow or deny)
 # closed and is reported separately from security: MetaMynd unreachable or slow, or an empty reply from
 # OpenShell (its provider-environment reload drops in-flight requests, runbook M4). An empty reply is
 # retried only when the ledger shows nothing executed, so a retry can never buy twice.
-attempt_allow() {
+attempt_retry() {
   local n
   for n in 1 2 3; do
     attempt "$@"
@@ -102,19 +103,19 @@ for sb in "$sb_a" "$sb_b"; do
 done
 
 echo "== governed purchases"
-attempt_allow "$sb_a" '{"amount":1,"currency":"MYR","merchant":"OfficeMart"}'
+attempt_retry "$sb_a" '{"amount":1,"currency":"MYR","merchant":"OfficeMart"}'
 row R1 "A buys RM1 at OfficeMart" '201/' "$CODE" "$DELTA" 1
-attempt "$sb_a" '{"amount":600,"currency":"MYR","merchant":"OfficeMart"}'
+attempt_retry "$sb_a" '{"amount":600,"currency":"MYR","merchant":"OfficeMart"}'
 row R2 "A over its RM500 cap" '403/metamynd_sop_spend_cap' "$CODE" "$DELTA"
-attempt "$sb_a" '{"amount":1,"currency":"MYR","merchant":"PaperCo"}'
+attempt_retry "$sb_a" '{"amount":1,"currency":"MYR","merchant":"PaperCo"}'
 row R3 "A at a merchant outside its mandate" '403/metamynd_merchant_not_allowed' "$CODE" "$DELTA"
-attempt "$sb_b" '{"amount":1,"currency":"MYR","merchant":"OfficeMart"}'
+attempt_retry "$sb_b" '{"amount":1,"currency":"MYR","merchant":"OfficeMart"}'
 row R4 "B sends A's allowed request" '403/metamynd_merchant_not_allowed' "$CODE" "$DELTA"
 
 echo "== identity forgery"
 attempt "$sb_a" '{"amount":1,"currency":"MYR","merchant":"PaperCo","agentDid":"'"$did_b"'"}'
 row R5 "A claims agent B's DID in the body" '403/metamynd_request_rejected' "$CODE" "$DELTA"
-attempt "$sb_a" '{"amount":1,"currency":"MYR","merchant":"PaperCo"}' -H "x-magp-request: {\"agentDid\":\"$did_b\",\"action\":\"office_supplies.purchase\",\"merchant\":\"PaperCo\"}"
+attempt_retry "$sb_a" '{"amount":1,"currency":"MYR","merchant":"PaperCo"}' -H "x-magp-request: {\"agentDid\":\"$did_b\",\"action\":\"office_supplies.purchase\",\"merchant\":\"PaperCo\"}"
 row R6 "A forges an x-magp-request as agent B" '403/metamynd_merchant_not_allowed' "$CODE" "$DELTA"
 [[ "$(journal_last "$sid_a")" == *"$did_a" ]] && ok "R6 the forged request was judged as agent A (identity comes from the sandbox)" || bad "R6 journal attributes the forged request to $(journal_last "$sid_a")"
 
@@ -141,11 +142,11 @@ row R12 "WebSocket upgrade on a denied purchase" '[0-9]{3}/.*' "$CODE" "$DELTA"
 echo "== a second client (Python urllib instead of curl)"
 # First credential use by a second binary: does OpenShell reload the provider environment again?
 drops_py=$(stale_drops)
-BUY=buy_py attempt_allow "$sb_a" '{"amount":1,"currency":"MYR","merchant":"OfficeMart"}'
+BUY=buy_py attempt_retry "$sb_a" '{"amount":1,"currency":"MYR","merchant":"OfficeMart"}'
 row R19 "A buys RM1 at OfficeMart from Python" '201/' "$CODE" "$DELTA" 1
 sleep 4
 note "stale-generation drops around Python's first credential use: $(( $(stale_drops) - drops_py ))"
-BUY=buy_py attempt "$sb_a" '{"amount":600,"currency":"MYR","merchant":"OfficeMart"}'
+BUY=buy_py attempt_retry "$sb_a" '{"amount":600,"currency":"MYR","merchant":"OfficeMart"}'
 row R20 "A over its RM500 cap from Python" '403/metamynd_sop_spend_cap' "$CODE" "$DELTA"
 before=$(ledger_count)
 R=$(buy_py "$sb_a" '{"amount":1,"currency":"MYR","merchant":"OfficeMart"}' https://127.0.0.1:8443/purchase-requests)
@@ -179,7 +180,7 @@ echo "== warm-up: first credential use in sandbox B"
 # tunnel. B's first allowed request would otherwise be the burst. One allowed purchase, then a pause
 # for the reload to land, keeps the burst measuring steady-state behaviour.
 drops_warm=$(stale_drops)
-attempt_allow "$sb_b" '{"amount":1,"currency":"MYR","merchant":"PaperCo"}'
+attempt_retry "$sb_b" '{"amount":1,"currency":"MYR","merchant":"PaperCo"}'
 row R13a "B buys RM1 at PaperCo (first credential use)" '201/' "$CODE" "$DELTA" 1
 sleep 8
 note "stale-generation drops around B's first credential use: $(( $(stale_drops) - drops_warm ))"
