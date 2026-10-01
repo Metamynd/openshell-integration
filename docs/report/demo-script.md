@@ -9,7 +9,7 @@ The recording follows `tools/demo.sh` scene by scene. Each scene waits for Enter
 3. Browser: signed in to metamynd.ai as the POC principal, with the review queue open in a tab. Close every tab that shows DIDs, keys or `.env.poc`.
 4. Recording: OBS, or Windows' built-in Game Bar (Win + Alt + R records the active window). Record the terminal and the browser tab; cut between them in the edit.
 5. Rehearse once with `DEMO_AUTO=3 bash tools/demo.sh`. The run adds a few RM1 rows and two escalations to the tenant; the escalations expire after 24 h.
-6. Start: `bash tools/demo.sh`. Setup takes about a minute and prints `ready`. Start recording, then press Enter.
+6. Start: `bash tools/demo.sh`. Setup takes about a minute and prints `ready`, including `bundle cache 30000 ms`: the gateway's policy-bundle cache is on by default (`GW_BUNDLE_TTL_MS=0` turns it off). Start recording, then press Enter.
 
 If the last screen shows an **Operator check** block, a scene did not behave as expected: re-record that scene or cut the block.
 

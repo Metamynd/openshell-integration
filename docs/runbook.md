@@ -577,7 +577,10 @@ The join from OCSF to the journal uses the sandbox plus a time window, because O
 ```shell
 bash tools/demo.sh                   # press Enter between scenes
 DEMO_AUTO=3 bash tools/demo.sh       # rehearsal: advance automatically
+GW_BUNDLE_TTL_MS=0 bash tools/demo.sh  # without the gateway's policy-bundle cache
 ```
+
+The demo runs the purchasing gateway **with the policy-bundle cache on** (`GW_BUNDLE_TTL_MS=30000`) unless told otherwise. It is `agentsafe-mcp-guard`'s push-invalidated cache, so it saves a round trip per purchase without delaying a containment. Before recording, check it pays off on this host with `GW_BUNDLE_TTL_MS=30000 PERF_N=100 PERF_LABEL=bundle-cache bash tools/m5-perf.sh`. The cache is only used while the agent's push stream to metamynd.ai is connected; a combined p50 near the uncached figure means the stream isn't connecting.
 
 The runner sets up the stack with sandboxes `demo-agent-a` and `demo-agent-b`, warms both clients (curl and Python), then plays nine scenes (see [demo-script.md](report/demo-script.md)). Evidence goes to `state/demo-evidence.{json,md}`, so it never overwrites the M5 run. If a scene misbehaves, an **Operator check** block on the last screen lists it, and the exit code is 1. Each run adds a few RM1 rows and two escalations that expire after 24 h.
 

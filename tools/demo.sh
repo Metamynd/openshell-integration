@@ -6,6 +6,9 @@
 #   DEMO_AUTO=6 bash tools/demo.sh                advance automatically after 6 s
 #   DEMO_GW_MODE=verify-only bash tools/demo.sh   purchasing gateway without MetaMynd checks
 #   DEMO_CLEAR=0 bash tools/demo.sh               do not clear the screen between scenes
+#   GW_BUNDLE_TTL_MS=0 bash tools/demo.sh         turn off the gateway's policy-bundle cache (on, 30 s, by default)
+# The bundle cache (agentsafe-mcp-guard's, push-invalidated) saves a round trip per purchase; a containment or
+# rule change still reaches the gateway within about a second.
 # It never prints DIDs, sandbox UUIDs or the purchasing token. The escalations it creates wait in the
 # POC tenant's review queue and expire after 24 h.
 set -uo pipefail
@@ -19,6 +22,9 @@ sb_a="demo-agent-a"
 sb_b="demo-agent-b"
 gw_mode=${DEMO_GW_MODE:-enforce}
 [[ "$gw_mode" == enforce || "$gw_mode" == verify-only ]] || die "DEMO_GW_MODE must be enforce or verify-only"
+# The purchasing gateway (started by poc-stack.sh) reads this from the environment.
+export GW_BUNDLE_TTL_MS=${GW_BUNDLE_TTL_MS:-30000}
+[[ "$GW_BUNDLE_TTL_MS" =~ ^[0-9]+$ ]] || die "GW_BUNDLE_TTL_MS must be a number of milliseconds (0 = off)"
 api="https://host.openshell.internal:8443/purchase-requests"
 MISMATCH=()
 SCENE=""
@@ -111,7 +117,7 @@ sleep 8
 since=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
 t0=$(date +%s)
 start_ledger=$(ledger_count)
-ok "ready (purchasing gateway: $gw_mode). Start recording, then press Enter."
+ok "ready (purchasing gateway: $gw_mode, bundle cache $( (( GW_BUNDLE_TTL_MS > 0 )) && echo "${GW_BUNDLE_TTL_MS} ms" || echo off)). Start recording, then press Enter."
 advance
 
 # ---------------------------------------------------------------- 1. the question
