@@ -624,7 +624,7 @@ Since `agentsafe-http-gateway` 0.16.0 (MetaMynd release `v1.72.1`, 30 Sep 2026),
 | Variable | Effect | Trade-off |
 | --- | --- | --- |
 | `GW_SETTLE_IN_BACKGROUND=0` | Settles before answering, as before 0.16.0. Used as the comparison baseline | One more round trip to metamynd.ai per purchase |
-| `GW_BUNDLE_TTL_MS=30000` | Caches each agent's signed policy bundle for 30 s, through the guard's `fetchBundle` hook, instead of fetching it on every request. The signature and staleness checks still run per request, and a failed fetch is never cached | The gateway's own containment check lags by up to the TTL. The adapter's authorize and the claim still check live state on every purchase |
+| `GW_BUNDLE_TTL_MS=30000` | Turns on agentsafe-mcp-guard's `bundleCache` (0.18.0): each agent's signed policy bundle is kept for at most 30 s instead of being fetched on every request, and dropped the moment the issuer pushes a change for that agent (containment, revocation, rule change) on `GET /policy/events/:did`. A cached bundle is reused only while that push stream is connected; the signature and staleness checks still run per request, and a failed fetch is never cached | None for containment: a contained agent is refused at the gateway within about a second. If the push stream cannot connect, the cache steps aside and every request fetches. (Before mcp-guard 0.18.0 this was a plain TTL cache, `src/latency.mjs`, whose containment check lagged by up to the TTL.) |
 
 Measure each step:
 
