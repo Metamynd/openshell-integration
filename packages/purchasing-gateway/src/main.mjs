@@ -4,7 +4,8 @@
 //   MM_API (https://metamynd.ai/api/v1)  MM_POLICY_PUBLIC_KEY (required; pinned bundle key)
 //   SERVICE_DID (did:key of this gateway)  SERVICE_SIGNER_SOCKET (its agentsafe-signer daemon, role service)
 //   PURCHASING_API_TOKEN (required; the bearer OpenShell substitutes from the provider)
-//   GW_BUNDLE_TTL_MS (0 = off)  cache each agent's policy bundle this long (src/latency.mjs)
+//   GW_BUNDLE_TTL_MS (0 = off)  cache each agent's policy bundle, at most this long (agentsafe-mcp-guard's bundleCache:
+//     dropped on every push from the issuer, and reused only while that push stream is connected)
 //   GW_SETTLE_IN_BACKGROUND (1) 0 = settle the hold before answering, as before agentsafe-http-gateway 0.16.0
 // Settlement: a 2xx upstream captures, 400/409/413/415/422 (the mock rejected it before any
 // effect) release, anything else is marked unknown. Since gateway 0.16.0 it runs after the answer.
@@ -15,7 +16,6 @@ import { createHttpGateway } from '@metamynd/agentsafe-http-gateway';
 // @ts-expect-error -- the @metamynd packages ship no type declarations
 import { createMcpGuard } from '@metamynd/agentsafe-mcp-guard';
 import { createForward, createPurchasingServer } from './gateway.mjs';
-import { createBundleCache } from './latency.mjs';
 
 const env = process.env;
 /** @param {Record<string, unknown>} entry */
@@ -40,7 +40,9 @@ const guard = createMcpGuard({
   requireAuthorization: true,
   policyPublicKey: required('MM_POLICY_PUBLIC_KEY'),
   requireContextSignature: true,
-  ...(bundleTtlMs > 0 ? { fetchBundle: createBundleCache({ issuerApi, ttlMs: bundleTtlMs }) } : {}),
+  // agentsafe-mcp-guard >= 0.18.0 caches the bundle itself and retires it on the issuer's push (containment, revocation,
+  // rule change), so a contained agent is refused here within about a second rather than after up to the TTL.
+  ...(bundleTtlMs > 0 ? { bundleCache: { maxAgeMs: bundleTtlMs } } : {}),
 });
 const forward = createForward(env.GW_UPSTREAM ?? 'http://127.0.0.1:18080');
 // GW_MODE=verify-only (adversarial matrix run B only): no MetaMynd checks at all, just the bearer
@@ -79,6 +81,7 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
       const left = await gateway.drainSettlements(10_000);
       if (left) log({ event: 'settlements_not_drained', pending: left, note: 'their holds stay committed to the cap' });
     }
+    guard.close(); // ends the bundle cache's push streams (a no-op without GW_BUNDLE_TTL_MS)
     process.exit(0);
   }));
 }
