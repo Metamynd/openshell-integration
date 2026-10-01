@@ -103,7 +103,7 @@ Proof-of-concept runs on 29–30 September 2026: WSL2 Ubuntu 24.04, OpenShell `v
 * Medians are stable across runs. The p95 and p99 vary from run to run with the network path, so repeat runs before relying on tail figures.
 
 {% hint style="info" %}
-The policy-bundle cache is opt-in (`GW_BUNDLE_TTL_MS`). It removes one round trip per request, but the gateway's *own* containment check can lag by up to the cache lifetime. The adapter's authorisation and the gateway's claim still check live state on every request.
+The policy-bundle cache is opt-in (`GW_BUNDLE_TTL_MS`). It removes one round trip per request. Since agentsafe-mcp-guard 0.18.0 it is the guard's own cache, which drops an agent's bundle as soon as MetaMynd pushes a change for it (containment, revocation, rule change), so the gateway refuses a contained agent within about a second; with the push stream down it simply fetches every time. The adapter's authorisation and the gateway's claim still check live state on every request.
 {% endhint %}
 
 ## Requirements
