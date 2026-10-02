@@ -684,3 +684,16 @@ Findings:
 Adversarial matrix (verify-only, sandboxes `62daa330…` and `94e36a48…`): **all 22 rows passed**, including R20 (`metamynd_sop_spend_cap`), R7 (raw TCP from `bash` refused) and the burst (10/10, ledger delta equal to the 201s).
 
 Evidence (`tools/m5-evidence.sh`): **6/6 decisions joined across all four sources**. OCSF 6/6; MetaMynd evidence record, trust-graph path and Merkle proof 6/6 each; ledger consistent 6/6, with exactly one row for each of the three allowed purchases.
+### Result: push-invalidated bundle cache (MetaMynd v1.74.0), 2 Oct 2026 on COO-JASIM-NB1
+
+`GW_BUNDLE_TTL_MS=30000 PERF_N=100 PERF_LABEL=bundle-cache bash tools/m5-perf.sh`, after #20 moved the gateway to `agentsafe-mcp-guard`'s push-invalidated cache. All 201; every hold settled.
+
+| Path | p50 | p95 | p99 | max |
+| --- | --- | --- | --- | --- |
+| OpenShell only | 47 ms | 74 ms | 85 ms | 90 ms |
+| MetaMynd only | 830 ms | 1361 ms | 1863 ms | 10912 ms |
+| Combined | **863 ms** | **1064 ms** | **1163 ms** | 1901 ms |
+
+- **Same speed-up as the old fixed-lifetime cache** (839 / 1051 / 1286 ms on 30 Sep), within run-to-run noise. So the push stream to metamynd.ai connects from this host, and the cache is in use.
+- **No containment lag:** the push-invalidated cache drops an agent's bundle as soon as MetaMynd pushes a change, so the 30 s trade-off of the old cache is gone. `tools/demo.sh` now runs with it on by default (#21).
+- One MetaMynd-only purchase took 10.9 s, a single outlier; that path's p99 was 1.9 s.
