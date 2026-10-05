@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Lets metamynd-sdk-bump start ci on its branch: a PR opened with GITHUB_TOKEN does not trigger pull_request.
+  workflow_dispatch:
 
 jobs:
   check:

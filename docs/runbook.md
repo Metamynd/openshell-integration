@@ -713,3 +713,40 @@ Evidence (`tools/m5-evidence.sh`): **6/6 decisions joined across all four source
 - **Settling an unclaimed hold needs the agent's or a registered counterparty's signature** (v1.79/v1.82). The packages sign their own settlements.
 
 The matrix, evidence and latency results above were recorded on the earlier versions. Rerun `tools/m4-matrix.sh verify-only`, `tools/m5-evidence.sh` and the `bundle-cache` latency run before relying on them for v1.83.0.
+## Keeping the MetaMynd SDK pins current
+
+`.github/workflows/metamynd-sdk-bump.yml` pins the four MetaMynd SDKs (`agentsafe-guard`, `-mcp-guard`, `-http-gateway`, `-signer`) to their latest npm versions. It opens one pull request on `deps/metamynd-sdk`, refreshed on each new release, and never merges it.
+
+- **Triggers:**
+  - an AgentSafe release tag (a `repository_dispatch` of type `agentsafe-release`, sent after AgentSafe's npm publish job, carrying `{ "tag": "vX.Y.Z" }`). After one, the workflow waits up to 10 min for npm to serve the new versions;
+  - a manual run;
+  - a daily check at 02:23 UTC, which catches a missed announcement.
+- **What it does:** `tools/bump-metamynd.mjs` reads npm's `latest` versions, rewrites every stale pin in `packages/*/package.json`, and records the release and version lines in `versions.lock`. The workflow then runs `npm install` and `npm run check`, commits as `github-actions[bot]`, opens or refreshes the PR, and starts `ci` on the branch, because a PR opened with `GITHUB_TOKEN` does not trigger `pull_request` workflows.
+- **It won't overwrite your fixes:** if the branch's latest commit is from a person (for example, code changes a breaking release needs), it comments on the PR instead of force-pushing.
+- **Locally:** `node tools/bump-metamynd.mjs [--tag vX.Y.Z]`, then `npm install`.
+
+GitHub turns off scheduled workflows in a repository with no activity for 60 days; the AgentSafe trigger still works.
+
+**One-time repository setting:** Settings → Actions → General → Workflow permissions → tick **Allow GitHub Actions to create and approve pull requests**. Without it the workflow can push the branch but `gh pr create` is refused.
+
+### Sending side (AgentSafe)
+
+Add this job to `jasimp18/AgentSafe` `.github/workflows/publish-packages.yml`. It runs only after `publish` succeeds on a `v*` tag, and never fails the release:
+
+```yaml
+  notify-openshell-integration:
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask Metamynd/openshell-integration to bump its SDK pins
+        env:
+          GH_TOKEN: ${{ secrets.OPENSHELL_INTEGRATION_DISPATCH_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then echo "::notice::OPENSHELL_INTEGRATION_DISPATCH_TOKEN is not set; skipping"; exit 0; fi
+          gh api repos/Metamynd/openshell-integration/dispatches -f event_type=agentsafe-release -f "client_payload[tag]=$TAG" \
+            || echo "::warning::could not notify openshell-integration; its daily check will pick the release up"
+```
+
+The token is a fine-grained personal access token with access to **only** `Metamynd/openshell-integration`, permission **Contents: Read and write** (required for `repository_dispatch`), stored as the AgentSafe secret `OPENSHELL_INTEGRATION_DISPATCH_TOKEN`. The Metamynd organisation must allow, or approve, fine-grained tokens. A GitHub App installation token works too.
