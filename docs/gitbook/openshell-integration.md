@@ -112,7 +112,7 @@ The policy-bundle cache is opt-in (`GW_BUNDLE_TTL_MS`). It removes one round tri
 * **OpenShell `v0.1.2`,** pinned. Install it from the tagged installer.
 * **Node.js 22 or later.**
 * **A MetaMynd tenant** with a verified principal, enrolled agents and mandates.
-* **MetaMynd packages:** `@metamynd/agentsafe-guard` 0.17.1+, `@metamynd/agentsafe-http-gateway` 0.16.1+, `@metamynd/agentsafe-mcp-guard` 0.17.2+, `@metamynd/agentsafe-signer` 0.19.1+.
+* **MetaMynd packages:** `@metamynd/agentsafe-guard` 0.28.4+, `@metamynd/agentsafe-http-gateway` 0.25.1+, `@metamynd/agentsafe-mcp-guard` 0.26.1+, `@metamynd/agentsafe-signer` 0.20.1+ (MetaMynd `v1.83.0`). Gateways on these versions must name the agents they act for and their owner principal.
 
 ## Set it up
 
@@ -138,6 +138,10 @@ const guard = createMcpGuard({
   serviceDid, keyProvider: 'daemon', daemonSocketPath,
   issuerApi: 'https://metamynd.ai/api/v1',
   requireAuthorization: true, requireContextSignature: true, policyPublicKey,
+  // Required since agentsafe-mcp-guard 0.22.0: the agents this gateway acts for, and the principal that owns its
+  // upstream credential (the `ownerPrincipal` in those agents' signed policy bundles). Others are refused.
+  allowedAgents: [agentADid, agentBDid],
+  gatewayOwnerPrincipal: ownerPrincipalDid,
 });
 const gateway = createHttpGateway({
   guard, routes, forward,
@@ -289,6 +293,6 @@ MetaMynd decisions appear as `metamynd_<code>`, for example `metamynd_sop_spend_
 | Component | Version |
 | --- | --- |
 | OpenShell | `v0.1.2` (`6648bd0c`) |
-| MetaMynd | `metamynd.ai` `v1.71.0`–`v1.72.2` |
-| `agentsafe-guard` / `agentsafe-mcp-guard` / `agentsafe-http-gateway` / `agentsafe-signer` | 0.17.1 / 0.17.2 / 0.16.1 / 0.19.1 |
+| MetaMynd | `metamynd.ai` `v1.71.0`–`v1.74.0` (benchmarks and matrix); SDKs since moved to `v1.83.0` |
+| `agentsafe-guard` / `agentsafe-mcp-guard` / `agentsafe-http-gateway` / `agentsafe-signer` | tested on 0.17.1 / 0.17.2 / 0.16.1 / 0.19.1 and 0.18.0 / 0.18.0 / 0.17.0; now pinned to 0.28.4 / 0.26.1 / 0.25.1 / 0.20.1 |
 | Host | Windows 11 + WSL2 Ubuntu 24.04, kernel 6.18, Docker 29.8, Node 24 |
