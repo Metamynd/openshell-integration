@@ -697,3 +697,19 @@ Evidence (`tools/m5-evidence.sh`): **6/6 decisions joined across all four source
 - **Same speed-up as the old fixed-lifetime cache** (839 / 1051 / 1286 ms on 30 Sep), within run-to-run noise. So the push stream to metamynd.ai connects from this host, and the cache is in use.
 - **No containment lag:** the push-invalidated cache drops an agent's bundle as soon as MetaMynd pushes a change, so the 30 s trade-off of the old cache is gone. `tools/demo.sh` now runs with it on by default (#21).
 - One MetaMynd-only purchase took 10.9 s, a single outlier; that path's p99 was 1.9 s.
+## MetaMynd SDKs moved to v1.83.0 (5 Oct 2026)
+
+`agentsafe-guard` 0.18.0 → **0.28.4**, `agentsafe-mcp-guard` 0.18.0 → **0.26.1**, `agentsafe-http-gateway` 0.17.0 → **0.25.1**, `agentsafe-signer` 0.19.1 → **0.20.1** (releases v1.75–v1.83). The adapter's APIs (`createGuard`, `authorize`, `buildSignedRequest`, `parseStrictJson`, route matching) are unchanged, and all 57 unit tests pass.
+
+**Breaking change handled: a gateway must say whom it acts for** (v1.79, MAGP §16.3). `createMcpGuard` now refuses to start without:
+- `allowedAgents`, the agent DIDs it serves; any other agent is refused `AGENT_NOT_ADMITTED`;
+- `gatewayOwnerPrincipal`, the principal DID that owns its upstream credential; an admitted agent another principal owns is refused `GATEWAY_OWNER_MISMATCH`.
+
+`tools/poc-stack.sh` now passes agents A and B as `GW_ALLOWED_AGENTS`, and reads `GW_OWNER_PRINCIPAL` from the `ownerPrincipal` in their signed policy bundles. It refuses to start if they differ or can't be read.
+
+**Behaviour changes to watch for on the next runs:**
+- **Risk the agent cannot lower** (v1.81). The gate derives a risk floor from the amount's share of the budget, a new merchant and the owner's tier, instead of trusting the route's `riskLevel` alone. Some purchases may now escalate where they were allowed before.
+- **Counterparty registration needs the service's signed acceptance** (v1.79). The POC's gateway was registered on 29 Sep without one. If claims start failing as unregistered, re-register it with proof of control; `tools/m1-enrol.sh` still uses the old call and needs updating first.
+- **Settling an unclaimed hold needs the agent's or a registered counterparty's signature** (v1.79/v1.82). The packages sign their own settlements.
+
+The matrix, evidence and latency results above were recorded on the earlier versions. Rerun `tools/m4-matrix.sh verify-only`, `tools/m5-evidence.sh` and the `bundle-cache` latency run before relying on them for v1.83.0.
