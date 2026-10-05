@@ -1,0 +1,105 @@
+name: metamynd-sdk-bump
+
+# Opens, or refreshes, one pull request that pins the MetaMynd SDKs to their latest npm versions.
+# Triggers:
+#   - an AgentSafe release announcing itself after its npm publish job (repository_dispatch "agentsafe-release",
+#     client_payload: { "tag": "vX.Y.Z" });
+#   - a manual run (Actions -> metamynd-sdk-bump -> Run workflow);
+#   - a daily check, which catches an announcement that never arrived.
+# The bump is never merged automatically: a new SDK can need code changes, and the system tests run on the POC host.
+
+on:
+  repository_dispatch:
+    types: [agentsafe-release]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: AgentSafe release tag to record in versions.lock (optional, e.g. v1.84.0)
+        required: false
+  schedule:
+    - cron: '23 2 * * *'
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write # to start ci on the bump branch (a PR opened with GITHUB_TOKEN does not trigger it)
+
+concurrency:
+  group: metamynd-sdk-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-24.04
+    env:
+      BRANCH: deps/metamynd-sdk
+      TAG: ${{ github.event.client_payload.tag || inputs.tag || '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Validate the release tag
+        if: env.TAG != ''
+        run: '[[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::not a release tag: $TAG"; exit 1; }'
+
+      - name: Pin the latest SDKs
+        id: bump
+        # After an announcement, wait up to 10 min for npm to serve the new versions.
+        run: node tools/bump-metamynd.mjs ${TAG:+--tag "$TAG"} --wait ${{ github.event_name == 'repository_dispatch' && 600 || 0 }}
+
+      - name: Update the lockfile and run the checks
+        if: steps.bump.outputs.changed == 'true'
+        run: |
+          npm install --ignore-scripts --no-audit --no-fund
+          npm run check
+
+      - name: Open or refresh the pull request
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SUMMARY: ${{ steps.bump.outputs.summary }}
+        run: |
+          # Never overwrite commits a person pushed to the bump branch (for example, code changes a release needs).
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; then
+            git fetch -q origin "$BRANCH"
+            if [[ "$(git log -1 --format=%ae "origin/$BRANCH")" != *github-actions* ]]; then
+              gh pr comment "$BRANCH" --body "MetaMynd published newer SDKs (${TAG:-latest}): $SUMMARY. This branch has commits from a person, so it was not overwritten; run \`node tools/bump-metamynd.mjs\` on it to pick them up." || true
+              exit 0
+            fi
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -C "$BRANCH"
+          git add packages/*/package.json package-lock.json versions.lock
+          git commit -q -m "chore(deps): MetaMynd SDKs ${TAG:-latest}" -m "$SUMMARY"
+          git push -q --force origin "$BRANCH"
+
+          notes=''
+          [[ -n "$TAG" ]] && notes="Release notes: https://github.com/jasimp18/AgentSafe/releases/tag/$TAG"
+          cat > "$RUNNER_TEMP/body.md" <<EOF
+          Pins the MetaMynd SDKs to their latest npm versions${TAG:+ after AgentSafe \`$TAG\`}.
+
+          **Changes:** $SUMMARY
+
+          $notes
+
+          Opened by the \`metamynd-sdk-bump\` workflow (${{ github.event_name }}). Lint, typecheck and unit tests passed in the workflow, and \`ci\` has been started on this branch.
+
+          **Before merging:**
+          - Read the release notes for breaking changes. For example, v1.79 made gateways name their agents and owner.
+          - On COO-JASIM-NB1, run \`tools/m4-matrix.sh verify-only\`, \`tools/m5-evidence.sh\` and a \`bundle-cache\` \`tools/m5-perf.sh\` run.
+          EOF
+
+          title="chore(deps): MetaMynd SDKs ${TAG:-latest}"
+          if [[ "$(gh pr view "$BRANCH" --json state -q .state 2>/dev/null)" == OPEN ]]; then
+            gh pr edit "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh pr create --base main --head "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+          fi
+          gh workflow run ci.yml --ref "$BRANCH"
