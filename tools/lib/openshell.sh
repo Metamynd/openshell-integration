@@ -66,7 +66,8 @@ restore_gateway_cfg() {
 # ensure_images: the curl sandbox image and the supervisor image trusting the POC CA.
 ensure_images() {
   docker build -q -t "$SMOKE_IMAGE" deploy/images/smoke >/dev/null || { echo "FAIL  docker build $SMOKE_IMAGE"; return 1; }
-  if docker image inspect "$PCA_IMAGE" >/dev/null 2>&1 && [[ state/supervisor-pca/ca-bundle.crt -nt state/certs/ca.pem ]]; then return 0; fi
+  if docker image inspect "$PCA_IMAGE" >/dev/null 2>&1 && [[ state/supervisor-pca/ca-bundle.crt -nt state/certs/ca.pem ]] \
+    && [[ $(stat -c %a state/supervisor-pca/ca-bundle.crt) == 644 ]]; then return 0; fi
   mkdir -p state/supervisor-pca
   docker image inspect "$PCA_BASE" >/dev/null 2>&1 || docker pull -q "$PCA_BASE" >/dev/null || { echo "FAIL  pull $PCA_BASE"; return 1; }
   local cid
@@ -74,6 +75,7 @@ ensure_images() {
   docker cp "$cid:/etc/ssl/certs/ca-certificates.crt" state/supervisor-pca/stock-bundle.crt >/dev/null
   docker rm "$cid" >/dev/null
   cat state/supervisor-pca/stock-bundle.crt state/certs/ca.pem > state/supervisor-pca/ca-bundle.crt
+  chmod 644 state/supervisor-pca/ca-bundle.crt   # the supervisor runs as nobody; see the Dockerfile
   cp deploy/images/supervisor-pca/Dockerfile state/supervisor-pca/Dockerfile
   docker build -q --build-arg "BASE=$PCA_BASE" -t "$PCA_IMAGE" state/supervisor-pca >/dev/null || { echo "FAIL  docker build $PCA_IMAGE"; return 1; }
 }
