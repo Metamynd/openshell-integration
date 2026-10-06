@@ -65,13 +65,19 @@ for (const f of workspaces) {
   if (next !== text) writeFileSync(f, next);
 }
 
+// The lock records the release too: a release that moved no package still updates it, and so still opens a PR.
+let lockChanged = false;
 if (changes.length || tag) {
-  const lock = JSON.parse(readFileSync('versions.lock', 'utf8'));
+  const before = readFileSync('versions.lock', 'utf8');
+  const lock = JSON.parse(before);
   for (const n of PACKAGES) if (lock.metamynd?.packages?.[n]) lock.metamynd.packages[n] = want[n].replace(/\.\d+$/, '.x');
   if (tag) lock.metamynd.service.release = tag;
-  writeFileSync('versions.lock', `${JSON.stringify(lock, null, 2)}\n`);
+  const after = `${JSON.stringify(lock, null, 2)}\n`;
+  lockChanged = after.replace(/\r\n/g, '\n') !== before.replace(/\r\n/g, '\n');
+  if (lockChanged) writeFileSync('versions.lock', after);
 }
 
-const summary = changes.map((n) => `${n.replace('@metamynd/', '')} ${pins[n].filter((v) => v !== want[n]).join('/')} → ${want[n]}`).join(', ');
+const bumped = changes.map((n) => `${n.replace('@metamynd/', '')} ${pins[n].filter((v) => v !== want[n]).join('/')} → ${want[n]}`).join(', ');
+const summary = bumped || (lockChanged ? `no SDK moved; versions.lock records ${tag ?? 'the latest versions'}` : '');
 console.log(changes.length ? `bumped: ${summary}` : `already on the latest: ${PACKAGES.map((n) => `${n.replace('@metamynd/', '')} ${want[n]}`).join(', ')}`);
-if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `changed=${changes.length > 0}\nsummary=${summary}\n`);
+if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `changed=${changes.length > 0 || lockChanged}\nsummary=${summary}\n`);
