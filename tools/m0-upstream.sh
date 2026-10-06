@@ -66,6 +66,7 @@ cid=$(docker create "$base_image") || die "docker create $base_image"
 docker cp "$cid:/etc/ssl/certs/ca-certificates.crt" state/supervisor-pca/stock-bundle.crt >/dev/null || { docker rm "$cid" >/dev/null; die "copy stock CA bundle"; }
 docker rm "$cid" >/dev/null
 cat state/supervisor-pca/stock-bundle.crt state/certs/ca.pem > state/supervisor-pca/ca-bundle.crt
+chmod 644 state/supervisor-pca/ca-bundle.crt   # the supervisor runs as nobody; see the Dockerfile
 cp deploy/images/supervisor-pca/Dockerfile state/supervisor-pca/Dockerfile
 docker build -q --build-arg "BASE=$base_image" -t "$pca_image" state/supervisor-pca >/dev/null || die "docker build $pca_image"
 ok "built $pca_image ($(grep -c 'BEGIN CERTIFICATE' state/supervisor-pca/ca-bundle.crt) roots)"
