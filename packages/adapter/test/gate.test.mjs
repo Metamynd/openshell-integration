@@ -159,6 +159,30 @@ test('after approval the resend runs on the approval\'s authorization', async ()
   assert.deepEqual(f.effectAsked, ['auth-approved']);
 });
 
+test('an approval survives a sandbox recreate: it belongs to the bound agent, and the journal links it to the request that used it', async () => {
+  const f = resumeFactory({ verdicts: [escalated], statuses: [{ status: 'approved', authorizationId: 'auth-approved' }], effects: [{ outcome: 'not_started' }] });
+  const gate = createMetaMyndGate({ agentsDir, guardFactory: f.factory });
+  await gate({ binding, route, canon, requestContext });
+  const recreated = { ...binding, sandboxId: 'sb-2', generation: 2 };
+  const v = await gate({ binding: recreated, route, canon, requestContext: { sandbox_id: 'sb-2', request_id: 'req-11' } });
+  assert.equal(v.permit, true);
+  // adapter.mjs copies these onto the journal entry of the request that used the approval.
+  assert.equal(v.escalationId, 'esc-1');
+  assert.equal(v.authorizationId, 'auth-approved');
+  assert.equal(v.reasonCode, 'ESCALATION_APPROVED');
+});
+
+test('another agent never resumes this agent\'s approval', async () => {
+  const OTHER = 'did:hedera:testnet:zB_0.0.2';
+  writeFileSync(join(agentsDir, 'B.json'), JSON.stringify({ apiBase: 'https://metamynd.ai/api/v1', agentDid: OTHER, agentKey: null }));
+  const f = resumeFactory({ verdicts: [escalated, { decision: 'escalate', escalationId: 'esc-b' }] });
+  const gate = createMetaMyndGate({ agentsDir, guardFactory: f.factory });
+  await gate({ binding, route, canon, requestContext });
+  const v = await gate({ binding: { ...binding, agentKey: 'B', agentDid: OTHER, sandboxId: 'sb-b' }, route, canon, requestContext: resend });
+  assert.equal(v.escalationId, 'esc-b');
+  assert.equal(f.asked.length, 0);
+});
+
 test('a different request does not resume another request\'s approval', async () => {
   const f = resumeFactory({ verdicts: [escalated, { decision: 'escalate', escalationId: 'esc-2' }] });
   const gate = createMetaMyndGate({ agentsDir, guardFactory: f.factory });
