@@ -276,6 +276,25 @@ MetaMynd decisions appear as `metamynd_<code>`, for example `metamynd_sop_spend_
 | `metamynd_unavailable` | MetaMynd timed out, failed or returned no verdict |
 | `metamynd_internal_error` | Unexpected adapter error |
 
+## Approving an escalation
+
+When MetaMynd escalates a request, the adapter denies it with `metamynd_escalation_pending` and remembers which escalation that exact request raised (`ADAPTER_ESCALATIONS`, default `state/escalations.json`).
+
+1. A person approves it in the MetaMynd dashboard, under **Escalations**.
+2. The agent then resends the identical request: same route, amount, currency, merchant and body.
+3. The adapter finds the escalation and permits the request on the authorization that the approval created. The purchasing gateway claims it once.
+
+What a resend returns depends on the escalation's state:
+
+| State | Resend returns |
+| --- | --- |
+| Not yet decided | The same `metamynd_escalation_pending`; no new escalation |
+| Approved, not yet spent | Permitted on the approval's authorization |
+| Denied, expired, approved with changes, or already spent | Asked afresh |
+| Status can't be fetched | `metamynd_unavailable` (fails closed) |
+
+A request that differs in any field is a new request.
+
 ## Limitations
 
 * **The adapter holds signing authority for every bound agent.** The evidence therefore proves that *OpenShell saw this request leave sandbox S, and S's bound agent is authorised for it*, not the agent's intent. Protect the adapter's OS user accordingly.

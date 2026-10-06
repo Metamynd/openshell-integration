@@ -7,6 +7,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 // @ts-expect-error -- the @metamynd packages ship no type declarations
 import { createGuard } from '@metamynd/agentsafe-guard';
+import { openEscalations, requestFingerprint } from './escalations.mjs';
+import { REASON } from './reasons.mjs';
 
 const PERMITS = new Set(['allow', 'observe']);
 
@@ -29,9 +31,10 @@ function withDeadline(promise, ms) {
  * @param {string} [opts.apiBase] overrides the config's apiBase (default: the config's)
  * @param {number} [opts.deadlineMs] budget for authorize + signing (design §5.3: 4 s)
  * @param {(opts: object) => any} [opts.guardFactory] injectable for tests
+ * @param {ReturnType<typeof openEscalations>} [opts.escalations] the escalations awaiting a person (default: in memory)
  * @returns {(ctx: { binding: import('./registry.mjs').Binding, route: import('./routes.mjs').Route, canon: any, requestContext: any }) => Promise<import('./adapter.mjs').Verdict>}
  */
-export function createMetaMyndGate({ agentsDir, apiBase, deadlineMs = 4000, guardFactory = createGuard }) {
+export function createMetaMyndGate({ agentsDir, apiBase, deadlineMs = 4000, guardFactory = createGuard, escalations = openEscalations(null) }) {
   /** @type {Map<string, any>} one guard per (agent, signer socket) */
   const guards = new Map();
 
@@ -61,11 +64,8 @@ export function createMetaMyndGate({ agentsDir, apiBase, deadlineMs = 4000, guar
       trace: { workflowId: String(requestContext.sandbox_id ?? ''), parentActionId: String(requestContext.request_id ?? '') },
       payload: canon.payload,
     };
-    return withDeadline((async () => {
-      const verdict = await guard.authorize(request);
-      const base = { decision: String(verdict?.decision ?? 'error'), reasonCode: verdict?.reasonCode,
-        authorizationId: verdict?.authorizationId ?? undefined, eventId: verdict?.eventId ?? undefined, escalationId: verdict?.escalationId ?? undefined };
-      if (!PERMITS.has(base.decision) || !base.authorizationId) return { ...base, permit: false };
+    /** @param {{ decision: string, reasonCode?: string, authorizationId: string, eventId?: string, escalationId?: string }} base */
+    const permitWith = async (base) => {
       const signed = await guard.buildSignedRequest(request);
       signed.authorizationId = base.authorizationId;
       return {
@@ -73,6 +73,36 @@ export function createMetaMyndGate({ agentsDir, apiBase, deadlineMs = 4000, guar
         permit: true,
         headerMutations: [{ write: { name: 'x-magp-request', value: JSON.stringify(signed), on_existing: 'EXISTING_HEADER_ACTION_OVERWRITE' } }],
       };
+    };
+    // The approval path: an escalated request is held for a person, and the agent can only resend it. The resend resumes
+    // the escalation it raised — never a second one — and once a person approved it, runs on the authorization that
+    // approval minted. The gateway claims that authorization atomically and checks it is this exact request (amount,
+    // merchant, payload and context), so a resend can spend an approval at most once.
+    const fingerprint = requestFingerprint(binding.agentDid, request);
+    return withDeadline((async () => {
+      const held = escalations.get(fingerprint);
+      if (held) {
+        // MetaMynd not answering is not an answer: fail closed and keep the entry, or a person's approval is lost.
+        const unavailable = { decision: 'error', reasonCode: 'GATE_UNREACHABLE', osReasonCode: REASON.UNAVAILABLE, escalationId: held, permit: false };
+        const st = await guard.escalationStatus(held);
+        if (st?.status === 'unreachable' || /^GATE_HTTP_5\d\d$/.test(String(st?.reasonCode ?? ''))) return unavailable;
+        if (st?.status === 'pending') return { decision: 'escalate', reasonCode: st.reasonCode ?? 'ESCALATION_PENDING', escalationId: held, permit: false };
+        if (st?.status === 'approved' && st.authorizationId) {
+          const fx = await guard.effectStatus(st.authorizationId);
+          if (fx?.effectState === 'unreachable') return unavailable;
+          if (fx?.outcome === 'not_started') {
+            return permitWith({ decision: 'allow', reasonCode: 'ESCALATION_APPROVED', authorizationId: st.authorizationId, escalationId: held });
+          }
+        }
+        // Denied, expired, modified (the approved request is not this one), or already spent: this request asks afresh.
+        escalations.forget(fingerprint);
+      }
+      const verdict = await guard.authorize(request);
+      const base = { decision: String(verdict?.decision ?? 'error'), reasonCode: verdict?.reasonCode,
+        authorizationId: verdict?.authorizationId ?? undefined, eventId: verdict?.eventId ?? undefined, escalationId: verdict?.escalationId ?? undefined };
+      if (base.decision === 'escalate' && base.escalationId) escalations.remember(fingerprint, base.escalationId);
+      if (!PERMITS.has(base.decision) || !base.authorizationId) return { ...base, permit: false };
+      return permitWith(/** @type {any} */ (base));
     })(), deadlineMs);
   };
 }

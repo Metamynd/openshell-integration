@@ -324,7 +324,9 @@ Steps 1–6 are the same as §5.1. The gate returns 403 `{decision: block, reaso
 - Every exception, non-200 gate response, verdict without a recognised shape or signer error maps to a deny code (§4.5). The adapter never returns `ALLOW` from an error path. This is enforced by a single `decide(verdict)` function with exhaustive tests.
 - **Orphaned holds:** an allowed request can mint a hold that never reaches the purchasing gateway. This happens when a later stage denies it, the sandbox disconnects, or the upstream fails before the claim. An unclaimed hold lapses after 15 min and consumes cap until then. The optional sweeper (M4) voids unclaimed holds older than 60 s. If a void races a late claim, the claim is refused and the purchase fails closed.
 
-### 5.4 Escalation (stretch)
+### 5.4 Escalation
+
+Built in `packages/adapter/src/escalations.mjs` and `gate.mjs`. The entry key is a fingerprint of everything the approval binds: agent, action, amount, currency, merchant, context and payload. Trace is left out because it changes on every resend. Entries persist to `ADAPTER_ESCALATIONS` (`state/escalations.json`), so an adapter restart doesn't orphan an approval, and they drop after 24 h 15 min. An approved authorization is reused only while `effectStatus` reports `not_started`; once it has been spent, the request asks afresh. Step 4 is resolved: the purchasing gateway claims by `authorizationId` and accepts a fresh nonce. It needs `@metamynd/agentsafe-mcp-guard` 0.27.0 or later, which states the approved context when claiming a person-approved hold, as metamynd.ai v1.84 requires.
 
 1. The gate returns `escalate`. The adapter denies with `metamynd_escalation_pending` and stores `(sandboxId, payloadDigest) → escalationId`.
 2. The reviewer approves in the MetaMynd dashboard.
