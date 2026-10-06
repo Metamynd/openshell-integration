@@ -714,6 +714,35 @@ Evidence (`tools/m5-evidence.sh`): **6/6 decisions joined across all four source
 - **Settling an unclaimed hold needs the agent's or a registered counterparty's signature** (v1.79/v1.82). The packages sign their own settlements.
 
 The matrix, evidence and latency results above were recorded on the earlier versions. Rerun `tools/m4-matrix.sh verify-only`, `tools/m5-evidence.sh` and the `bundle-cache` latency run before relying on them for v1.83.0.
+## Deploying to a systemd host
+
+A host that runs the adapter and the purchasing gateway as systemd services runs them from a plain copy of this repository. The Myrene rehearsal host is an example:
+- the code is in `/opt/metamynd/openshell-integration`;
+- state is in `/var/lib/metamynd`;
+- the units are `metamynd-adapter`, `metamynd-purchasing-gateway` and `metamynd-signer@*`.
+
+That copy is not a git checkout, so nothing updates it when `main` moves. On 6 Oct 2026 the Myrene host was still running adapter 0.2.0-m3 after the escalation fix (#26) merged. To update a host, run this from an up-to-date checkout on it:
+
+```bash
+git pull --ff-only origin main
+sudo bash tools/deploy-host.sh --dry-run      # lists what would change; changes nothing
+sudo bash tools/deploy-host.sh                # add --restart-signers to restart the signer daemons too
+cat /opt/metamynd/openshell-integration/DEPLOYED
+```
+
+The script:
+1. Refuses uncommitted changes to tracked files (override with `--allow-dirty`).
+2. Backs up the deployed copy to `<dest>.bak-<UTC time>`, keeping the newest 3.
+3. Copies the code over it, leaving out `.git`, `state/`, `node_modules/` and `docs/report/`.
+4. Runs `npm ci --omit=dev`.
+5. Gives the adapter its escalations file, `ADAPTER_ESCALATIONS=/var/lib/metamynd/escalations/escalations.json`, in a directory its user owns, through a systemd drop-in.
+6. Restarts the gateway, then the adapter, and waits for each to log `listening`.
+7. Records the commit it deployed in `DEPLOYED`.
+
+If anything fails after the copy, it restores the backup and restarts the services. To roll back by hand, run the command the script prints at the end. The paths, units and user are environment variables (`DEPLOY_DEST`, `DEPLOY_STATE`, `DEPLOY_USER`, `ADAPTER_UNIT`, `GATEWAY_UNIT`, `SIGNER_UNITS`); `--help` lists them.
+
+**Registry ownership.** On such a host, the bindings registry is written by root (the bind CLI and the watcher) and read by the adapter, which runs as `metamynd`. Set `ADAPTER_REGISTRY_GID=<metamynd's gid>` in the writers' environment. Each write then makes the file `root:<gid>` with mode `0640`, set before the rename so it is never readable with the wrong permissions. Unset, the registry stays owner-only (`0600`).
+
 ## Keeping the MetaMynd SDK pins current
 
 `.github/workflows/metamynd-sdk-bump.yml` pins the four MetaMynd SDKs (`agentsafe-guard`, `-mcp-guard`, `-http-gateway`, `-signer`) to their latest npm versions. It opens one pull request on `deps/metamynd-sdk`, refreshed on each new release, and never merges it.
