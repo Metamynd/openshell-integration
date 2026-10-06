@@ -2,7 +2,7 @@
 //   node packages/adapter/bin/bindings.mjs bind <sandboxId> <sandboxName> <agentKey>   (agentKey from state/enrolment.json, e.g. A)
 //   node packages/adapter/bin/bindings.mjs revoke <sandboxId>
 //   node packages/adapter/bin/bindings.mjs list
-// Env: ADAPTER_REGISTRY (state/bindings.json)
+// Env: ADAPTER_REGISTRY (state/bindings.json), ADAPTER_REGISTRY_GID (unset = owner-only 0600; a numeric gid = shared 0640 with that group)
 import { readFileSync } from 'node:fs';
 import { readBindings, revokeBinding, writeRegistry } from '../src/registry.mjs';
 

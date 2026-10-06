@@ -10,7 +10,7 @@ import { ExtensionAuthError } from './jwt.mjs';
 import { REASON, isValidReasonCode, mapMetaMyndReason } from './reasons.mjs';
 import { matchRoute } from './routes.mjs';
 
-export const ADAPTER_VERSION = '0.2.1-m3';
+export const ADAPTER_VERSION = '0.2.2-m3';
 
 /**
  * HttpResponsePreReturn handler (design §3.1 `response`): evidence only. At preflight it

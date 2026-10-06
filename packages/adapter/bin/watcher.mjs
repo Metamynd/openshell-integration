@@ -3,7 +3,7 @@
 // gateway no longer lists. Deviation from design §3.4: the CLI list replaces a gRPC
 // ListSandboxes/WatchSandbox client, so no control-plane protos are vendored; the poll interval
 // bounds the revocation lag instead of a stream.
-// Env: ADAPTER_REGISTRY (state/bindings.json), WATCH_INTERVAL_MS (3000), WATCH_GRACE_MISSES (2)
+// Env: ADAPTER_REGISTRY (state/bindings.json), ADAPTER_REGISTRY_GID (unset = owner-only 0600; a numeric gid = shared 0640 with that group), WATCH_INTERVAL_MS (3000), WATCH_GRACE_MISSES (2)
 import { execFile } from 'node:child_process';
 import { readBindings, revokeBinding } from '../src/registry.mjs';
 import { createWatcher, sandboxIdsFrom } from '../src/watcher.mjs';
