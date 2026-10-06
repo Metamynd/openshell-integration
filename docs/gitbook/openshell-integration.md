@@ -295,6 +295,12 @@ What a resend returns depends on the escalation's state:
 
 A request that differs in any field is a new request.
 
+**An approval belongs to the bound agent, not to the sandbox.** It survives a sandbox recreate, even though the sandbox gets a new ID on every reboot. The approval stays usable as long as the new sandbox is bound to the same agent. Another agent's identical request never uses it.
+
+**It is used once.** The purchasing gateway claims the approved authorization at MetaMynd atomically, and checks it against the amount, merchant, payload and approved context. Two concurrent resends cannot both spend it: only one claim succeeds.
+
+**The journal links them.** The journal entry for the request that used the approval records its `escalationId` and `authorizationId` with reason `ESCALATION_APPROVED`.
+
 ## Limitations
 
 * **The adapter holds signing authority for every bound agent.** The evidence therefore proves that *OpenShell saw this request leave sandbox S, and S's bound agent is authorised for it*, not the agent's intent. Protect the adapter's OS user accordingly.
