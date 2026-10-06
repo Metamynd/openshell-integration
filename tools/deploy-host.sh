@@ -7,7 +7,7 @@
 # What it does, in order (any failure after the copy rolls back to the previous copy and restarts it):
 #   1. checks this checkout: the commit it deploys, and no uncommitted changes to tracked files (--allow-dirty to override)
 #   2. backs up the deployed copy to <dest>.bak-<UTC timestamp> (keeps the newest $KEEP_BACKUPS)
-#   3. copies the code (rsync --delete; never .git, state/, node_modules/ or docs/report/) and runs npm ci there
+#   3. copies the code (rsync --delete; never .git, state/, node_modules/ or docs/report/) and runs npm ci --omit=dev there
 #   4. gives the adapter its escalations file (ADAPTER_ESCALATIONS, a systemd drop-in) in a directory its user owns
 #   5. restarts the signers (only with --restart-signers), then the purchasing gateway, then the adapter, and waits for
 #      each to log "listening"
@@ -58,7 +58,7 @@ for unit in "$ADAPTER_UNIT" "$GATEWAY_UNIT"; do
   systemctl cat "$unit.service" >/dev/null 2>&1 || die "systemd unit $unit.service not found"
 done
 if [[ -z "${SIGNER_UNITS+x}" ]]; then
-  SIGNER_UNITS=$(systemctl list-units --all --plain --no-legend 'metamynd-signer@*.service' | awk '{print $1}' | tr '\n' ' ')
+  SIGNER_UNITS=$(systemctl list-units --all --plain --no-legend 'metamynd-signer@*.service' | awk '{print $1}' | tr '\n' ' ' | sed 's/ $//')
 fi
 
 COMMIT=$(git -C "$SRC" rev-parse --short HEAD)
@@ -110,7 +110,7 @@ step "copy"
 "${RSYNC[@]}" "$SRC/" "$DEST/"
 ok "code copied"
 step "npm ci"
-(cd "$DEST" && npm ci --no-audit --no-fund)
+(cd "$DEST" && npm ci --omit=dev --no-audit --no-fund)
 DEPLOYED_VERSION=$(sed -n "s/^export const ADAPTER_VERSION = '\(.*\)';/\1/p" "$DEST/packages/adapter/src/adapter.mjs")
 [[ "$DEPLOYED_VERSION" == "$VERSION" ]] || die "$DEST has adapter $DEPLOYED_VERSION after the copy, expected $VERSION"
 ok "adapter $DEPLOYED_VERSION; $(cd "$DEST" && for p in node_modules/@metamynd/agentsafe-*/package.json; do node -p "require('./$p').name.replace('@metamynd/','') + ' ' + require('./$p').version"; done | tr '\n' ',' | sed 's/,$//; s/,/, /g')"
