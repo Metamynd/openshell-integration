@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { canonicalise } from '../src/canon.mjs';
 import { createJournal } from '../src/journal.mjs';
 import { REASON, isValidReasonCode, mapMetaMyndReason } from '../src/reasons.mjs';
-import { openRegistry, readBindings, writeRegistry } from '../src/registry.mjs';
+import { openRegistry, readBindings, registryGid, writeRegistry } from '../src/registry.mjs';
 import { matchRoute, validateRoutes } from '../src/routes.mjs';
 
 const ROUTES = validateRoutes([
@@ -107,6 +107,26 @@ test('the registry returns only active bindings and keeps the last good copy on 
   assert.deepEqual(readBindings(join(dir, 'missing.json')), []);
 });
 
+test('ADAPTER_REGISTRY_GID shares the registry with one group, read-only; unset it stays owner-only', { skip: process.platform === 'win32' && 'POSIX modes' }, () => {
+  assert.equal(registryGid({}), null);
+  assert.equal(registryGid({ ADAPTER_REGISTRY_GID: '' }), null);
+  assert.equal(registryGid({ ADAPTER_REGISTRY_GID: '998' }), 998);
+  assert.throws(() => registryGid({ ADAPTER_REGISTRY_GID: 'metamynd' }), /numeric group id/);
+
+  const gid = /** @type {() => number} */ (process.getgid)(); // a group this test may chown to without root
+  const shared = join(mkdtempSync(join(tmpdir(), 'registry-gid-')), 'registry', 'bindings.json');
+  writeRegistry(shared, [binding(SB1)], { gid });
+  const st = statSync(shared);
+  assert.equal(st.mode & 0o777, 0o640);
+  assert.equal(st.gid, gid);
+  assert.equal(statSync(join(shared, '..')).mode & 0o777, 0o750, 'a directory it creates is traversable by the group');
+  writeRegistry(shared, [binding(SB1), binding(SB2)], { gid });
+  assert.equal(statSync(shared).mode & 0o777, 0o640, 'a rewrite keeps the shared mode');
+
+  const own = join(mkdtempSync(join(tmpdir(), 'registry-own-')), 'bindings.json');
+  writeRegistry(own, [binding(SB1)], { gid: null });
+  assert.equal(statSync(own).mode & 0o777, 0o600);
+});
 test('the journal writes only allow-listed fields', () => {
   const dir = mkdtempSync(join(tmpdir(), 'journal-'));
   const journal = createJournal(dir, { now: () => new Date('2026-09-29T10:00:00Z') });

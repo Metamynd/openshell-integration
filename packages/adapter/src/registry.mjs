@@ -1,7 +1,7 @@
 // sandbox_id -> agent binding registry (design §3.2, §4.4). A single JSON document written
 // atomically by trusted operator tooling; the adapter only reads it. A reload that fails
 // validation keeps the last good copy, so a bad write can never widen or drop bindings silently.
-import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, writeSync } from 'node:fs';
+import { chmodSync, chownSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, writeSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -87,10 +87,33 @@ export function openRegistry(path, { log = () => {}, minReloadMs = 500 } = {}) {
   };
 }
 
-/** Atomic write for operator tooling: temp file, fsync, rename. @param {string} path @param {Binding[]} bindings */
-export function writeRegistry(path, bindings) {
+/**
+ * The group the registry is shared with, from ADAPTER_REGISTRY_GID: when the writers (bind CLI, watcher) run as a
+ * different user from the adapter (e.g. root writes, the adapter runs as `metamynd`), the file is made <owner>:<gid> 0640
+ * so the adapter can read it and nobody else can. Unset: owner-only 0600, as before.
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {number | null}
+ */
+export function registryGid(env = process.env) {
+  const raw = env.ADAPTER_REGISTRY_GID;
+  if (raw === undefined || raw === '') return null;
+  if (!/^\d+$/.test(raw)) throw new Error(`ADAPTER_REGISTRY_GID must be a numeric group id, got ${raw}`);
+  return Number(raw);
+}
+
+/**
+ * Atomic write for operator tooling: temp file, fsync, rename. Ownership and mode are set on the temp file, before the
+ * rename, so the registry is never visible with the wrong permissions.
+ * @param {string} path
+ * @param {Binding[]} bindings
+ * @param {{ gid?: number | null }} [opts] defaults to ADAPTER_REGISTRY_GID
+ */
+export function writeRegistry(path, bindings, { gid = registryGid() } = {}) {
   parseRegistry({ bindings });
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const dir = dirname(path);
+  const created = !existsSync(dir);
+  mkdirSync(dir, { recursive: true, mode: gid === null ? 0o700 : 0o750 });
+  if (created && gid !== null) chownSync(dir, -1, gid);
   const tmp = `${path}.${process.pid}.tmp`;
   const fd = openSync(tmp, 'w', 0o600);
   try {
@@ -99,8 +122,12 @@ export function writeRegistry(path, bindings) {
   } finally {
     closeSync(fd);
   }
+  if (gid !== null) {
+    chownSync(tmp, -1, gid); // -1: keep the writer as owner
+    chmodSync(tmp, 0o640);
+  }
   renameSync(tmp, path);
-  chmodSync(path, 0o600);
+  if (gid === null) chmodSync(path, 0o600);
 }
 
 /**
