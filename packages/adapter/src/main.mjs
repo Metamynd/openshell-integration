@@ -7,11 +7,13 @@
 //   ADAPTER_GATE (on): "off" builds the deny-only adapter of M2
 //   ADAPTER_AGENTS_DIR (state/agents): each bound agent's guard config (<agentKey>.json, from enrolment)
 //   ADAPTER_GATE_DEADLINE_MS (4000)  MM_API (the agent config's apiBase)
+//   ADAPTER_ESCALATIONS (state/escalations.json): the escalations awaiting a person, so a resend resumes its approval
 import { readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ADAPTER_VERSION, createAdapterHandlers, createResponseHandlers } from './adapter.mjs';
+import { openEscalations } from './escalations.mjs';
 import { createMetaMyndGate } from './gate.mjs';
 import { createJournal } from './journal.mjs';
 import { createExtensionVerifier } from './jwt.mjs';
@@ -46,7 +48,12 @@ const verifyToken = createExtensionVerifier({
 const journal = createJournal(env.ADAPTER_JOURNAL_DIR ?? 'state/journal');
 const gateOn = env.ADAPTER_GATE !== 'off';
 const gate = gateOn
-  ? createMetaMyndGate({ agentsDir: env.ADAPTER_AGENTS_DIR ?? 'state/agents', apiBase: env.MM_API, deadlineMs: Number(env.ADAPTER_GATE_DEADLINE_MS ?? 4000) })
+  ? createMetaMyndGate({
+      agentsDir: env.ADAPTER_AGENTS_DIR ?? 'state/agents',
+      apiBase: env.MM_API,
+      deadlineMs: Number(env.ADAPTER_GATE_DEADLINE_MS ?? 4000),
+      escalations: openEscalations(env.ADAPTER_ESCALATIONS ?? 'state/escalations.json', { log }),
+    })
   : null;
 const handlers = createAdapterHandlers({
   verifyToken,
