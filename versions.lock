@@ -30,10 +30,10 @@
       "note": "hosted instance the POC targets. M0-M4 ran on v1.71.0 (contains #785); v1.72.0 (asynchronous decision path) was deployed on 30 Sep 2026 and the M5 latency re-measured on it; v1.72.1 (agentsafe-http-gateway 0.16.0: answer first, settle after) and v1.72.2 (the SDKs keep idle connections for 60 s: guard 0.17.1, mcp-guard 0.17.2, http-gateway 0.16.1) followed the same day. v1.74.0 (1 Oct) added the push-invalidated bundle cache; the SDKs were moved to the v1.83.0 releases on 5 Oct 2026 (guard 0.28.4, mcp-guard 0.26.1, http-gateway 0.25.1, signer 0.20.1), which require a gateway to name the agents it acts for and its owner principal. On 6 Oct 2026 they moved to the v1.84.0 releases (guard 0.31.1, mcp-guard 0.27.0, http-gateway 0.26.0, signer 0.20.3): metamynd.ai v1.84 refuses a claim of a person-approved hold that does not state the approved context, which mcp-guard 0.26.x does not send. v1.85.0 changed no SDK. MetaMynd holds the Hedera operator account."
     },
     "packages": {
-      "@metamynd/agentsafe-guard": "0.31.x",
-      "@metamynd/agentsafe-http-gateway": "0.26.x",
-      "@metamynd/agentsafe-mcp-guard": "0.27.x",
-      "@metamynd/agentsafe-signer": "0.20.x"
+      "@metamynd/agentsafe-guard": "0.34.x",
+      "@metamynd/agentsafe-http-gateway": "0.28.x",
+      "@metamynd/agentsafe-mcp-guard": "0.29.x",
+      "@metamynd/agentsafe-signer": "0.21.x"
     }
   }
 }
