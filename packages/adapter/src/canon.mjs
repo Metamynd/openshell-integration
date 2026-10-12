@@ -2,7 +2,6 @@
 // Everything ambiguous is refused rather than interpreted: an encoded or non-JSON body, repeated
 // framing headers, non-strict JSON (duplicate keys, unsafe numbers), unknown fields, and value
 // fields the purchasing gateway could not bind (amount must be a JSON number).
-// @ts-expect-error -- the @metamynd packages ship no type declarations
 import { parseStrictJson } from '@metamynd/agentsafe-http-gateway';
 
 const CURRENCY = /^[A-Z]{3}$/;
@@ -42,18 +41,19 @@ export function canonicalise(route, request, maxBodyBytes) {
     return { ok: false, why: String(/** @type {Error} */ (err).message) };
   }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { ok: false, why: 'body must be a JSON object' };
+  const fields = /** @type {Record<string, unknown>} */ (payload);
 
   const allowed = new Set(route.allowedFields);
-  const unknown = Object.keys(payload).filter((k) => !allowed.has(k));
+  const unknown = Object.keys(fields).filter((k) => !allowed.has(k));
   if (unknown.length) return { ok: false, why: `fields not allowed on this route: ${unknown.join(', ')}` };
-  const missing = (route.valueFields ?? []).filter((k) => payload[k] === undefined);
+  const missing = (route.valueFields ?? []).filter((k) => fields[k] === undefined);
   if (missing.length) return { ok: false, why: `missing value fields: ${missing.join(', ')}` };
 
-  const { amount, currency, merchant } = payload;
+  const { amount, currency, merchant } = fields;
   if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) return { ok: false, why: 'amount must be a positive JSON number' };
   if (Math.round(amount * 100) / 100 !== amount) return { ok: false, why: 'amount has more than 2 decimal places' };
   if (typeof currency !== 'string' || !CURRENCY.test(currency)) return { ok: false, why: 'currency must be a 3-letter uppercase code' };
   if (typeof merchant !== 'string' || merchant.length === 0 || merchant.length > 120) return { ok: false, why: 'merchant must be a non-empty string' };
 
-  return { ok: true, action: /** @type {string} */ (route.action), fields: { amount, currency, merchant }, payload };
+  return { ok: true, action: /** @type {string} */ (route.action), fields: { amount, currency, merchant }, payload: fields };
 }

@@ -26,7 +26,7 @@ function safeEqual(a, b) {
  */
 export function createForward(upstream) {
   const base = upstream.replace(/\/$/, '');
-  /** @param {{ method: string, path: string, headers: Record<string, any>, rawBody?: Buffer }} req */
+  /** @param {{ method: string, path: string, headers: Record<string, any>, rawBody?: Uint8Array }} req */
   return async function forward(req) {
     /** @type {Record<string, string>} */
     const headers = {};
@@ -61,7 +61,7 @@ function readBody(req) {
 
 /**
  * @param {object} opts
- * @param {(req: object) => Promise<any>} opts.gateway the function createHttpGateway returns
+ * @param {(req: any) => Promise<any>} opts.gateway the function createHttpGateway returns
  * @param {string} opts.bearerToken upstream API token OpenShell injects from the provider
  * @param {{ cert: Buffer, key: Buffer } | null} opts.tls null serves plain HTTP (tests only)
  * @param {(entry: Record<string, unknown>) => void} [opts.log]

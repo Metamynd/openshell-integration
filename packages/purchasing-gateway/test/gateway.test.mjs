@@ -2,14 +2,13 @@
 // purchasing API: bearer check, forwarding, idempotency key, settlement and refusals.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-// @ts-expect-error -- the @metamynd packages ship no type declarations
 import { createHttpGateway } from '@metamynd/agentsafe-http-gateway';
 import { createMockPurchasing } from '../../mock-purchasing/src/server.mjs';
 import { createForward, createPurchasingServer } from '../src/gateway.mjs';
 
 const TOKEN = 'upstream-token';
 const LEDGER = 'ledger-token';
-/** @type {{ decision: string, reasonCode: string }} */
+/** @type {{ decision: import('@metamynd/agentsafe-http-gateway').ServiceVerdict['decision'], reasonCode: string }} */
 let verdict = { decision: 'allow', reasonCode: 'AUTHORIZED' };
 /** @type {any[]} */
 const settled = [];
@@ -22,9 +21,9 @@ const fakeGuard = {
     auth += 1;
     return { ...verdict, authorizationId: `auth-${auth}-${request.nonce}`, counterpartyAuthenticated: true };
   },
-  async captureAuthorization(/** @type {any} */ c) { settled.push({ kind: 'capture', ...c }); },
-  async releaseAuthorization(/** @type {any} */ c) { settled.push({ kind: 'release', ...c }); },
-  async markAuthorizationUnknown(/** @type {any} */ c) { settled.push({ kind: 'unknown', ...c }); },
+  async captureAuthorization(/** @type {any} */ c) { settled.push({ kind: 'capture', ...c }); return { ok: true }; },
+  async releaseAuthorization(/** @type {any} */ c) { settled.push({ kind: 'release', ...c }); return { ok: true }; },
+  async markAuthorizationUnknown(/** @type {any} */ c) { settled.push({ kind: 'unknown', ...c }); return { ok: true }; },
 };
 
 /** @type {import('node:http').Server} */ let upstream;
