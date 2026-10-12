@@ -5,7 +5,6 @@
 // signed request carrying the authorizationId, sent as `x-magp-request`.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-// @ts-expect-error -- the @metamynd packages ship no type declarations
 import { createGuard } from '@metamynd/agentsafe-guard';
 import { openEscalations, requestFingerprint } from './escalations.mjs';
 import { REASON } from './reasons.mjs';
@@ -30,7 +29,7 @@ function withDeadline(promise, ms) {
  * @param {string} opts.agentsDir directory holding each enrolled agent's guard config (<agentKey>.json)
  * @param {string} [opts.apiBase] overrides the config's apiBase (default: the config's)
  * @param {number} [opts.deadlineMs] budget for authorize + signing (design §5.3: 4 s)
- * @param {(opts: object) => any} [opts.guardFactory] injectable for tests
+ * @param {(opts: any) => any} [opts.guardFactory] injectable for tests
  * @param {ReturnType<typeof openEscalations>} [opts.escalations] the escalations awaiting a person (default: in memory)
  * @returns {(ctx: { binding: import('./registry.mjs').Binding, route: import('./routes.mjs').Route, canon: any, requestContext: any }) => Promise<import('./adapter.mjs').Verdict>}
  */
