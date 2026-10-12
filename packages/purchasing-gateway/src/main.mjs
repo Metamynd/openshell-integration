@@ -15,9 +15,7 @@
 // effect) release, anything else is marked unknown. Since gateway 0.16.0 it runs after the answer.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-// @ts-expect-error -- the @metamynd packages ship no type declarations
 import { createHttpGateway } from '@metamynd/agentsafe-http-gateway';
-// @ts-expect-error -- the @metamynd packages ship no type declarations
 import { createMcpGuard } from '@metamynd/agentsafe-mcp-guard';
 import { createForward, createPurchasingServer } from './gateway.mjs';
 
@@ -82,7 +80,7 @@ server.listen(port, host, () => log({ event: 'listening', host, port, routes: ro
 // stock server.mjs does the same; this gateway runs its own server).
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => server.close(async () => {
-    if (typeof gateway.drainSettlements === 'function') {
+    if ('drainSettlements' in gateway) {
       log({ event: 'draining_settlements', pending: gateway.pendingSettlements() });
       const left = await gateway.drainSettlements(10_000);
       if (left) log({ event: 'settlements_not_drained', pending: left, note: 'their holds stay committed to the cap' });

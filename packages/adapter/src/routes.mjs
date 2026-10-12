@@ -2,7 +2,6 @@
 // matcher (percent-decoding, `*` one segment, trailing `**` the rest) so the adapter and the
 // purchasing gateway classify a request identically; the adapter adds host and port.
 import { readFileSync } from 'node:fs';
-// @ts-expect-error -- the @metamynd packages ship no type declarations
 import { methodMatches, pathMatches } from '@metamynd/agentsafe-http-gateway/route-match';
 
 const RISK_LEVELS = new Set(['low', 'medium', 'high', 'critical']);
@@ -54,7 +53,7 @@ export function loadRoutes(file) {
 export function matchRoute(routes, target) {
   const host = String(target.host ?? '').toLowerCase();
   for (const r of routes) {
-    if (r.host === host && r.port === Number(target.port) && methodMatches(r.method, target.method) && pathMatches(r.path, target.path ?? '')) return r;
+    if (r.host === host && r.port === Number(target.port) && methodMatches(r.method, target.method ?? '') && pathMatches(r.path, target.path ?? '')) return r;
   }
   return null;
 }
