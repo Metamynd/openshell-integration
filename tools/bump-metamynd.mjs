@@ -31,16 +31,32 @@ function currentPins() {
   }
   return pins;
 }
+/**
+ * The registry's `latest` for one package, retried (3 tries, 5 s then 10 s apart) on a network error, a 429 or a 5xx.
+ * @param {string} name
+ * @returns {Promise<string>}
+ */
+async function latestOf(name) {
+  for (let attempt = 1; ; attempt++) {
+    let res;
+    try {
+      res = await fetch(`https://registry.npmjs.org/${name.replace('/', '%2F')}/latest`, { headers: { accept: 'application/json' } });
+    } catch (err) {
+      if (attempt >= 3) throw new Error(`could not reach the npm registry for ${name}: ${/** @type {Error} */ (err).message}`);
+      await new Promise((r) => setTimeout(r, 5_000 * attempt));
+      continue;
+    }
+    if ((res.status === 429 || res.status >= 500) && attempt < 3) { await new Promise((r) => setTimeout(r, 5_000 * attempt)); continue; }
+    const version = res.ok ? (await res.json())?.version : undefined;
+    if (typeof version !== 'string' || !/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`could not read the latest version of ${name} (HTTP ${res.status})`);
+    return version;
+  }
+}
 /** @returns {Promise<Record<string, string>>} package -> the version npm's `latest` tag points at */
 async function latest() {
   /** @type {Record<string, string>} */
   const out = {};
-  for (const name of PACKAGES) {
-    const res = await fetch(`https://registry.npmjs.org/${name.replace('/', '%2F')}/latest`, { headers: { accept: 'application/json' } });
-    const version = res.ok ? (await res.json())?.version : undefined;
-    if (typeof version !== 'string' || !/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`could not read the latest version of ${name} (HTTP ${res.status})`);
-    out[name] = version;
-  }
+  for (const name of PACKAGES) out[name] = await latestOf(name);
   return out;
 }
 
