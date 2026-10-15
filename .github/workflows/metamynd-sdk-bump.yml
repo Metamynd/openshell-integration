@@ -56,7 +56,15 @@ jobs:
       - name: Update the lockfile and run the checks
         if: steps.bump.outputs.changed == 'true'
         run: |
-          npm install --ignore-scripts --no-audit --no-fund
+          # Right after a publish, the registry's `latest` can name a version that `npm install` cannot fetch yet
+          # (ETARGET; seen on v1.94.0), and the npm cache restored above can hold metadata from before the release.
+          # So revalidate metadata (--prefer-online) and retry: 5 tries, 30 s apart.
+          for attempt in 1 2 3 4 5; do
+            npm install --prefer-online --ignore-scripts --no-audit --no-fund && break
+            [[ $attempt == 5 ]] && { echo "::error::npm install failed 5 times"; exit 1; }
+            echo "::warning::npm install failed (attempt $attempt of 5); retrying in 30 s"
+            sleep 30
+          done
           npm run check
 
       - name: Open or refresh the pull request
@@ -65,11 +73,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SUMMARY: ${{ steps.bump.outputs.summary }}
         run: |
+          # retry <cmd…>: GitHub's API and git remote calls fail transiently (a 502 on v1.95.0 left this PR stale and ci
+          # unstarted). 5 tries, 10/20/30/40 s apart.
+          # (Its loop variable has an unusual name because bash scopes `local` dynamically: a command that used the same
+          # name would see, and change, the loop counter.)
+          retry() {
+            local _retry_try
+            for _retry_try in 1 2 3 4 5; do
+              "$@" && return 0
+              [[ $_retry_try == 5 ]] && { echo "::error::failed 5 times: $1 $2"; return 1; }
+              echo "::warning::attempt $_retry_try failed: $1 $2; retrying in $((_retry_try * 10)) s"
+              sleep $((_retry_try * 10))
+            done
+          }
+
           # Never overwrite commits a person pushed to the bump branch (for example, code changes a release needs).
-          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; then
-            git fetch -q origin "$BRANCH"
+          # ls-remote exits 2 when the branch doesn't exist; any other failure is retried.
+          remote_head() { git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; local rc=$?; [[ $rc == 0 || $rc == 2 ]] && { has_branch=$rc; return 0; }; return 1; }
+          retry remote_head
+          if [[ $has_branch == 0 ]]; then
+            retry git fetch -q origin "$BRANCH"
             if [[ "$(git log -1 --format=%ae "origin/$BRANCH")" != *github-actions* ]]; then
-              gh pr comment "$BRANCH" --body "MetaMynd published newer SDKs (${TAG:-latest}): $SUMMARY. This branch has commits from a person, so it was not overwritten; run \`node tools/bump-metamynd.mjs\` on it to pick them up." || true
+              retry gh pr comment "$BRANCH" --body "MetaMynd published newer SDKs (${TAG:-latest}): $SUMMARY. This branch has commits from a person, so it was not overwritten; run \`node tools/bump-metamynd.mjs\` on it to pick them up." || true
               exit 0
             fi
           fi
@@ -78,7 +103,9 @@ jobs:
           git switch -C "$BRANCH"
           git add packages/*/package.json package-lock.json versions.lock
           git commit -q -m "chore(deps): MetaMynd SDKs ${TAG:-latest}" -m "$SUMMARY"
-          git push -q --force origin "$BRANCH"
+          retry git push -q --force origin "$BRANCH"
+          # Start ci before touching the PR, so a failing PR update can never leave the new commit untested.
+          retry gh workflow run ci.yml --ref "$BRANCH"
 
           notes=''
           [[ -n "$TAG" ]] && notes="Release notes: https://github.com/jasimp18/AgentSafe/releases/tag/$TAG"
@@ -97,9 +124,12 @@ jobs:
           EOF
 
           title="chore(deps): MetaMynd SDKs ${TAG:-latest}"
-          if [[ "$(gh pr view "$BRANCH" --json state -q .state 2>/dev/null)" == OPEN ]]; then
-            gh pr edit "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+          # `gh pr list` exits 0 with no output when there is no open PR, so a failure here is a real error to retry
+          # (unlike `gh pr view`, which also fails when the PR simply doesn't exist).
+          open_pr() { pr=$(gh pr list --head "$BRANCH" --state open --json number -q '.[0].number'); }
+          retry open_pr
+          if [[ -n "$pr" ]]; then
+            retry gh pr edit "$pr" --title "$title" --body-file "$RUNNER_TEMP/body.md"
           else
-            gh pr create --base main --head "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+            retry gh pr create --base main --head "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/body.md"
           fi
-          gh workflow run ci.yml --ref "$BRANCH"
