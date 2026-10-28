@@ -780,3 +780,13 @@ Add this job to the MetaMynd platform repository's publish workflow. It runs onl
 ```
 
 The token is a fine-grained personal access token with access to **only** `Metamynd/openshell-integration`, permission **Contents: Read and write** (required for `repository_dispatch`), stored as the AgentSafe secret `OPENSHELL_INTEGRATION_DISPATCH_TOKEN`. The Metamynd organisation must allow, or approve, fine-grained tokens. A GitHub App installation token works too.
+
+## Egress policy anchoring
+
+`bindings.mjs bind` reads the sandbox's effective policy (`openshell sandbox get <name> --policy-only`, the text `tools/policy-lint.sh` checks) and records its hash on the binding. A sandbox whose policy cannot be read is not bound.
+
+With `MM_USERNAME` and `MM_PASSWORD` set to the agents' owner, bind also asks MetaMynd to anchor the hash on the agent's HCS topic (`POST /agent-identity/:id/egress-policy`), as an `egress-policy` op. The binding then records where the hash was anchored. Anchoring is evidence, not enforcement: without the credentials, or if the anchor fails, the binding still stands and bind prints a `WARN` line.
+
+The hash is sha256 over the policy text, with line endings normalised to LF and trailing whitespace removed. It is byte-identical to `egressPolicyHash` in `@metamynd/magp-evidence`, the independent verifier, which a shared test vector pins. A verifier later shown the policy recomputes the hash with `verifyEgressPolicy`, finds the anchor for the sandbox, and can read the policy to confirm it allows no route around the adapter.
+
+`bindings.mjs check <sandboxId>` re-reads the policy and exits 1 if it changed since the sandbox was bound. Rebinding records and anchors the new policy under the next generation.

@@ -3,6 +3,7 @@
 // validation keeps the last good copy, so a bad write can never widen or drop bindings silently.
 import { chmodSync, chownSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, writeSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { isEgressPolicyHash } from './egress-policy.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -17,6 +18,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * @property {'active' | 'revoked'} status
  * @property {string} createdAt
  * @property {string | null} revokedAt
+ * @property {string} [egressPolicyHash] the sandbox's effective egress policy when bound (egress-policy.mjs)
+ * @property {string | null} [egressPolicyAnchor] where that hash is anchored on Hedera, or null when it is not
  */
 
 /** @param {unknown} doc @returns {Map<string, Binding>} */
@@ -35,6 +38,10 @@ export function parseRegistry(doc) {
     if (!b.agentDid.startsWith('did:')) throw new Error(`${where}: agentDid must be a DID`);
     if (!Number.isInteger(b.generation) || b.generation < 1) throw new Error(`${where}: generation must be a positive integer`);
     if (b.status !== 'active' && b.status !== 'revoked') throw new Error(`${where}: status must be active or revoked`);
+    if (b.egressPolicyHash !== undefined && !isEgressPolicyHash(b.egressPolicyHash)) throw new Error(`${where}: egressPolicyHash must be sha256:<64 hex>`);
+    if (b.egressPolicyAnchor !== undefined && b.egressPolicyAnchor !== null && typeof b.egressPolicyAnchor !== 'string') {
+      throw new Error(`${where}: egressPolicyAnchor must be a string or null`);
+    }
     map.set(b.sandboxId.toLowerCase(), { ...b, sandboxId: b.sandboxId.toLowerCase() });
   }
   return map;
