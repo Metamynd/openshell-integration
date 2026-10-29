@@ -1,5 +1,7 @@
 // Operator CLI for the sandbox_id -> agent binding registry (design §3.2). Run from the repo root.
-//   node packages/adapter/bin/bindings.mjs bind <sandboxId> <sandboxName> <agentKey>   (agentKey from state/enrolment.json, e.g. A)
+//   node packages/adapter/bin/bindings.mjs bind <sandboxId> <sandboxName> <agentKey> [--tenant <id>] [--user <id>]
+//     (agentKey from state/enrolment.json, e.g. A; --tenant/--user: whom the sandbox acts for, the principal a route
+//      with `access.principal: "binding"` compares answers with)
 //   node packages/adapter/bin/bindings.mjs check <sandboxId>   (does the sandbox still run the egress policy it was bound under?)
 //   node packages/adapter/bin/bindings.mjs revoke <sandboxId>
 //   node packages/adapter/bin/bindings.mjs list
@@ -11,8 +13,18 @@ import { anchorEgressPolicy, egressPolicyHash, readEffectivePolicy } from '../sr
 import { readBindings, revokeBinding, writeRegistry } from '../src/registry.mjs';
 
 const path = process.env.ADAPTER_REGISTRY ?? 'state/bindings.json';
-const [cmd, ...args] = process.argv.slice(2);
+const [cmd, ...argv] = process.argv.slice(2);
 const bindings = readBindings(path);
+/** @type {{ tenantId?: string, userId?: string }} */
+const principal = {};
+const args = [];
+for (let i = 0; i < argv.length; i++) {
+  const flag = { '--tenant': 'tenantId', '--user': 'userId' }[/** @type {string} */ (argv[i])];
+  if (!flag) { args.push(argv[i]); continue; }
+  const value = argv[++i];
+  if (!value?.trim() || value.startsWith('--')) throw new Error(`${argv[i - 1]} needs a value`);
+  principal[/** @type {'tenantId' | 'userId'} */ (flag)] = value;
+}
 
 if (cmd === 'bind' && args.length === 3) {
   const [sandboxId, sandboxName, agentKey] = args;
@@ -27,9 +39,13 @@ if (cmd === 'bind' && args.length === 3) {
     sandboxId: id, sandboxName, agentKey, agentDid: agent.agentDid, signerSocket: `state/signers/${agent.signer}/signer.sock`,
     generation: (previous?.generation ?? 0) + 1, status: /** @type {const} */ ('active'), createdAt: new Date().toISOString(), revokedAt: null,
     egressPolicyHash: policyHash, egressPolicyAnchor: /** @type {string | null} */ (null),
+    // A rebind without --tenant/--user keeps the principal the sandbox was bound for; dropping it silently would deny
+    // every request on a route whose principal is "binding".
+    ...(Object.keys(principal).length ? { accessPrincipal: principal } : previous?.accessPrincipal ? { accessPrincipal: previous.accessPrincipal } : {}),
   };
   writeRegistry(path, [...bindings.filter((b) => b.sandboxId !== id), next]);
   console.log(`ok    bound ${id} (${sandboxName}) -> agent ${agentKey} ${agent.agentDid} (generation ${next.generation})`);
+  if (next.accessPrincipal) console.log(`      acts for tenant ${next.accessPrincipal.tenantId ?? '-'}, user ${next.accessPrincipal.userId ?? '-'}`);
   console.log(`      egress policy ${policyHash}`);
 
   // Anchoring is evidence, not enforcement: the binding stands whether or not it succeeds, and says which.
@@ -70,6 +86,6 @@ if (cmd === 'bind' && args.length === 3) {
 } else if (cmd === 'list') {
   for (const b of bindings) console.log(`${b.status.padEnd(8)} ${b.sandboxId}  ${b.sandboxName.padEnd(20)} agent ${b.agentKey}  gen ${b.generation}${b.egressPolicyHash ? `  policy ${b.egressPolicyHash.slice(0, 19)}…${b.egressPolicyAnchor ? ' anchored' : ''}` : ''}`);
 } else {
-  console.error('usage: bindings.mjs bind <sandboxId> <sandboxName> <agentKey> | check <sandboxId> | revoke <sandboxId> | list');
+  console.error('usage: bindings.mjs bind <sandboxId> <sandboxName> <agentKey> [--tenant <id>] [--user <id>] | check <sandboxId> | revoke <sandboxId> | list');
   process.exit(2);
 }

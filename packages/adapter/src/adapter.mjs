@@ -4,25 +4,49 @@
 // ask MetaMynd (the `gate`). Every path that is not an explicit MetaMynd permit (or a
 // read-only passthrough route) returns DENY with a stable reason_code; errors never allow.
 import grpc from '@grpc/grpc-js';
+import { accessPrincipal, checkAccessBody } from './access.mjs';
 import { canonicalise } from './canon.mjs';
 import { buildManifest, checkGatewayMetadata, structToObject } from './describe.mjs';
 import { ExtensionAuthError } from './jwt.mjs';
 import { REASON, isValidReasonCode, mapMetaMyndReason } from './reasons.mjs';
 import { matchRoute } from './routes.mjs';
 
-export const ADAPTER_VERSION = '0.2.2-m3';
+export const ADAPTER_VERSION = '0.3.0-m3';
+
+const WHOLE_BODY = 'HTTP_RESPONSE_BODY_MODE_WHOLE_BODY_BYTES';
+// Statuses that carry no body: nothing to withhold.
+const BODYLESS = new Set([204, 205, 304]);
 
 /**
- * HttpResponsePreReturn handler (design §3.1 `response`): evidence only. At preflight it
- * journals the upstream status against the request_id, then skips the stage. It never blocks
- * a response and never settles anything: OpenShell does not call it when the upstream fails,
- * so settlement stays with the purchasing gateway.
+ * HttpResponsePreReturn handler (design §3.1 `response`). At preflight it journals the upstream status against the
+ * request_id. A route with no `access` is then skipped, as before: this stage never settles anything (OpenShell does not
+ * call it when the upstream fails, so settlement stays with the purchasing gateway).
+ *
+ * A route with `access` (access.mjs) asks for the whole body of a 2xx answer and blocks its delivery unless every tenant
+ * and user field it names holds the principal the sandbox is bound for. The upstream call already ran; what is withheld
+ * is its answer, and OpenShell returns its canonical 403 with the reason_code (never the field's value). An answer that
+ * cannot be read whole (encoded, partial, too large) is withheld as uncheckable.
  * @param {object} opts
  * @param {((authorization: unknown) => import('./jwt.mjs').ExtensionClaims) | null} opts.verifyToken
  * @param {{ append(entry: Record<string, unknown>): unknown }} opts.journal
+ * @param {Map<string, import('./routes.mjs').Route[]>} [opts.routeSets] route files by name; without them no answer is checked
+ * @param {{ lookup(sandboxId: unknown): import('./registry.mjs').Binding | null }} [opts.registry]
  * @param {(entry: Record<string, unknown>) => void} [opts.log]
  */
-export function createResponseHandlers({ verifyToken, journal, log = () => {} }) {
+export function createResponseHandlers({ verifyToken, journal, routeSets, registry, log = () => {} }) {
+  /** @param {Record<string, unknown>} entry */
+  const record = (entry) => {
+    try {
+      journal.append(entry);
+    } catch (err) {
+      log({ event: 'journal_write_failed', error: String(/** @type {Error} */ (err).message) });
+    }
+  };
+  /** @param {string} reasonCode @param {string} reason */
+  const block = (reasonCode, reason) => ({ block_delivery: {}, reason_code: mapMetaMyndReason(reasonCode), reason });
+  // A preflight that fails before its route is known is blocked only when some route could have needed the check.
+  const anyAccess = [...(routeSets?.values() ?? [])].some((routes) => routes.some((r) => r.access));
+
   return {
     /** @param {any} call bidirectional stream of HttpResponseEvent / HttpResponseEventResult */
     Evaluate(call) {
@@ -35,17 +59,76 @@ export function createResponseHandlers({ verifyToken, journal, log = () => {} })
           log({ rpc: 'HttpResponsePreReturn', auth: err instanceof ExtensionAuthError ? err.code : 'error' });
         }
       }
-      call.on('data', (/** @type {any} */ event) => {
-        if (!event?.preflight) return; // body/trailers never follow a skip; session_end needs no reply
-        const ctx = event.preflight.context ?? {};
-        if (trusted) {
-          try {
-            journal.append({ kind: 'response', requestId: ctx.request_id, sandboxId: ctx.sandbox_id, statusCode: event.preflight.status_code });
-          } catch (err) {
-            log({ event: 'journal_write_failed', error: String(/** @type {Error} */ (err).message) });
-          }
+      /** @type {{ access: import('./access.mjs').RouteAccess, principal: { tenantId?: string | number, userId?: string | number }, entry: Record<string, unknown> } | null} */
+      let pending = null;
+
+      /** @param {any} preflight */
+      function onPreflight(preflight) {
+        const ctx = preflight.context ?? {};
+        /** @type {Record<string, unknown>} */
+        const entry = { kind: 'response', requestId: ctx.request_id, sandboxId: ctx.sandbox_id, statusCode: preflight.status_code };
+        const config = structToObject(preflight.config);
+        const routes = typeof config.routes === 'string' ? routeSets?.get(config.routes) : undefined;
+        const route = routes ? matchRoute(routes, preflight.target ?? {}) : null;
+        const status = Number(preflight.status_code);
+        if (!route?.access || status < 200 || status >= 300) {
+          if (trusted) record(entry);
+          return { skip: {} };
         }
-        call.write({ preflight_result: { skip: {} } });
+        // From here the answer is checked; what happens to it is journaled either way.
+        const withhold = (/** @type {string} */ reasonCode, /** @type {string} */ why) => {
+          record({ ...entry, access: 'withheld', reasonCode, why });
+          return block(reasonCode, why);
+        };
+        if (!trusted) return withhold('ACCESS_CONTEXT_UNCHECKABLE', 'the response stage caller is not authenticated');
+        const principal = accessPrincipal(route.access, registry?.lookup(ctx.sandbox_id) ?? null);
+        if (!principal) return withhold('ACCESS_PRINCIPAL_UNAVAILABLE', 'no access principal for this sandbox');
+        const modes = preflight.permitted_body_modes ?? [];
+        if (!modes.includes(WHOLE_BODY)) {
+          if (BODYLESS.has(status) || preflight.target?.method === 'HEAD') {
+            record({ ...entry, access: 'released' });
+            return { skip: {} };
+          }
+          return withhold('ACCESS_CONTEXT_UNCHECKABLE', 'the answer cannot be read whole (encoded, partial or larger than the limit)');
+        }
+        pending = { access: route.access, principal, entry };
+        return { inspect: { body_mode: WHOLE_BODY, header_mutations: [] } };
+      }
+
+      // Once a body unit is blocked, every later unit on this stream is blocked too (OpenShell should send none).
+      let blocked = false;
+      /** @param {any} body */
+      function onBody(body) {
+        if (blocked) return { sequence: body.sequence, ...block('ACCESS_CONTEXT_UNCHECKABLE', 'delivery already blocked') };
+        const p = pending;
+        if (!p) return { sequence: body.sequence, pass_through: {} };
+        pending = null;
+        // WHOLE_BODY_BYTES delivers the body as one final unit.
+        const refusal = body.end_of_stream
+          ? checkAccessBody(body.data ?? new Uint8Array(0), p.access, p.principal)
+          : { reasonCode: 'ACCESS_CONTEXT_UNCHECKABLE', path: '', detail: 'the answer arrived in parts' };
+        if (!refusal) {
+          record({ ...p.entry, access: 'released' });
+          return { sequence: body.sequence, pass_through: {} };
+        }
+        const why = `${refusal.reasonCode} at ${refusal.path || '(body)'}${refusal.detail ? `: ${refusal.detail}` : ''}`;
+        record({ ...p.entry, access: 'withheld', reasonCode: refusal.reasonCode, path: refusal.path });
+        blocked = true;
+        return { sequence: body.sequence, ...block(refusal.reasonCode, why) };
+      }
+
+      call.on('data', (/** @type {any} */ event) => {
+        try {
+          if (event?.preflight) call.write({ preflight_result: onPreflight(event.preflight) });
+          else if (event?.body) call.write({ body_result: onBody(event.body) });
+          else if (event?.trailers) call.write({ trailers_result: { trailer_mutations: [] } });
+          // session_end needs no reply
+        } catch (err) {
+          log({ rpc: 'HttpResponsePreReturn', event: 'error', error: String(/** @type {Error} */ (err)?.message ?? err) });
+          // An answer under an access check that could not be checked is never delivered; one without a check is unaffected.
+          if (event?.preflight) call.write({ preflight_result: anyAccess ? block('ACCESS_CONTEXT_UNCHECKABLE', 'adapter error') : { skip: {} } });
+          else if (event?.body) call.write({ body_result: { sequence: event.body.sequence, ...block('ACCESS_CONTEXT_UNCHECKABLE', 'adapter error') } });
+        }
       });
       call.on('end', () => call.end());
       call.on('error', () => {});
@@ -144,6 +227,9 @@ export function createAdapterHandlers({ verifyToken, audience, maxPayloadBytes, 
 
       const route = matchRoute(/** @type {any} */ (routeSets.get(/** @type {string} */ (config.routes))), target);
       if (!route) return deny(REASON.ROUTE_NOT_ALLOWED, 'no route matches this request');
+      // Under an access check the answer is compared with the principal this sandbox is bound for; with none to compare
+      // against, nothing is sent (the response stage would only withhold the answer of a call that already ran).
+      if (route.access && !accessPrincipal(route.access, binding)) return deny(REASON.ACCESS_PRINCIPAL_UNAVAILABLE, 'no access principal for this sandbox');
       if (route.action === null) {
         Object.assign(entry, { decision: 'passthrough' });
         return { allow: true, osReasonCode: '' };

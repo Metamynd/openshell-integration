@@ -79,7 +79,7 @@ A Node.js 22 (ESM) gRPC server that implements two services from the pinned prot
 | `signer` | One cached `agentsafe-guard` instance per binding, created with `createGuard({ api, agentDid, keyProvider: 'daemon', daemonSocketPath })`. It calls `buildSignedRequest({ action, amount, currency, merchant, resource, context, trace, payload })` with `payload` = the parsed body and `context` = `{ riskLevel }` taken from the matched route (§4.2). That call produces `payloadDigest`/`payloadSignature` and `envelopeSignature`. |
 | `gate` | `POST {MM_API}/policy/mandate/authorize` with the signed request and a hard deadline (§5.3). It classifies the response into `Verdict {permit, decision, reasonCode, authorizationId, eventId, escalationId, envelopeId}`. Only HTTP 200 with `allow` or `observe` is a permit. |
 | `decide` | Builds `HttpRequestResult`. A permit gives `ALLOW` plus a header mutation `x-magp-request` (overwrite) = JSON of `{...signed, authorizationId}`. Anything else gives `DENY` plus a mapped `reason_code` (§4.5). It never replaces the body. |
-| `response` | `HttpResponsePreReturn.Evaluate`: at preflight it records `status_code` against `request_id` and returns `skip`. It never blocks. It ignores later events. |
+| `response` | `HttpResponsePreReturn.Evaluate`: at preflight it records `status_code` against `request_id`. A route without `access` is skipped and never blocked. A route with `access` (§4.2a) asks for the whole body of a 2xx answer and blocks its delivery unless every named tenant and user field holds the sandbox's principal. |
 | `journal` | Append-only JSONL decision journal (§4.6), fsynced per record. This is the bridge for correlating evidence. |
 | `escalation` (stretch) | Stores `(sandbox_id, payloadDigest)` → `escalationId`. When an identical request is retried, it polls the escalation status and uses the approved `authorizationId` (§5.4). |
 
@@ -204,6 +204,27 @@ Every governed route must set `riskLevel` (`low` | `medium` | `high` | `critical
 This is required because metamynd.ai enforces the EU AI Act Standard, whose risk rule escalates any request without a well-formed `riskLevel` as `CONTEXT_UNVERIFIABLE`. Spike S5 observed this on production: all 20 allowed-class probes escalated until the field was added.
 
 The value is signed by `envelopeSignature`. At the gate its provenance is still "agent claim", because the adapter signs as the agent, so an owner who wants a hard floor sets the mandate's `riskTier`.
+
+### 4.2a Answers that belong to someone else (`access`)
+
+Any route, governed or read-only, may carry `access`. It is the same check as `route.access` in `agentsafe-http-gateway` 0.35.0, whose module the adapter imports:
+
+```json
+{ "host": "crm.internal", "port": 443, "method": "GET", "path": "/records", "action": null,
+  "access": { "tenant": ["/items/*/tenantId"], "user": ["/items/*/owner"], "principal": "binding" } }
+```
+
+- **Principal.** It is either fixed in the route (`{ "tenantId": "…", "userId": "…" }`) or `"binding"`. With `"binding"`, it is the tenant and user the operator recorded when binding the sandbox (`bindings.mjs bind … --tenant T --user U`, stored as `accessPrincipal`). It never comes from the sandbox's request.
+- **Request stage.** A sandbox with no principal for the route is denied with `metamynd_access_principal_unavailable`, and nothing is sent.
+- **Response stage.** A 2xx answer is inspected in `WHOLE_BODY_BYTES` mode. Delivery is blocked with `metamynd_access_context_mismatch` when any named field holds another tenant or user. It is blocked with `metamynd_access_context_uncheckable` when:
+  - a field is missing;
+  - a value is not a string or number;
+  - the body is not strict JSON;
+  - the answer cannot be read whole (compressed, partial, or larger than the stage limit).
+
+  OpenShell then returns its canonical 403 with that code. The upstream call has already run. The journal records `access: "withheld"` with the code and the field's path, never its value.
+- **Passes unchecked:** an empty body, a bodyless status (204, 205, 304, or a HEAD) and a non-2xx error.
+- **Setup:** an upstream behind an access route must answer uncompressed (the agent sends `Accept-Encoding: identity`). Otherwise every answer is withheld as uncheckable.
 
 ### 4.3 Policy `config` Struct (validated by `ValidateConfig`)
 

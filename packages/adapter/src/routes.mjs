@@ -3,6 +3,7 @@
 // purchasing gateway classify a request identically; the adapter adds host and port.
 import { readFileSync } from 'node:fs';
 import { methodMatches, pathMatches } from '@metamynd/agentsafe-http-gateway/route-match';
+import { validateRouteAccess } from './access.mjs';
 
 const RISK_LEVELS = new Set(['low', 'medium', 'high', 'critical']);
 
@@ -16,6 +17,7 @@ const RISK_LEVELS = new Set(['low', 'medium', 'high', 'critical']);
  * @property {string[]} [valueFields]
  * @property {string[]} [allowedFields]
  * @property {'low' | 'medium' | 'high' | 'critical'} [riskLevel] required for governed routes
+ * @property {import('./access.mjs').RouteAccess} [access] withhold an answer naming another tenant or user (access.mjs)
  */
 
 /** @param {unknown} raw @param {string} source @returns {Route[]} */
@@ -27,7 +29,9 @@ export function validateRoutes(raw, source) {
     if (typeof r.host !== 'string' || !r.host) throw new Error(`${where}: host is required`);
     if (!Number.isInteger(r.port) || r.port < 1 || r.port > 65535) throw new Error(`${where}: port must be 1-65535`);
     if (typeof r.method !== 'string' || typeof r.path !== 'string') throw new Error(`${where}: method and path are required`);
-    if (r.action === null) return { host: r.host.toLowerCase(), port: r.port, method: r.method, path: r.path, action: null };
+    // A read-only passthrough route is where another tenant's records are most likely to come back, so `access` applies to both kinds.
+    const access = r.access === undefined ? {} : { access: validateRouteAccess(r.access, where) };
+    if (r.action === null) return { host: r.host.toLowerCase(), port: r.port, method: r.method, path: r.path, action: null, ...access };
     if (typeof r.action !== 'string' || !r.action) throw new Error(`${where}: action must be a string or null`);
     if (!RISK_LEVELS.has(r.riskLevel)) throw new Error(`${where}: governed routes need riskLevel low|medium|high|critical`);
     for (const k of ['valueFields', 'allowedFields']) {
@@ -36,7 +40,7 @@ export function validateRoutes(raw, source) {
     const missing = r.valueFields.filter((/** @type {string} */ f) => !r.allowedFields.includes(f));
     if (missing.length) throw new Error(`${where}: valueFields not in allowedFields: ${missing.join(', ')}`);
     return { host: r.host.toLowerCase(), port: r.port, method: r.method, path: r.path, action: r.action,
-      valueFields: [...r.valueFields], allowedFields: [...r.allowedFields], riskLevel: r.riskLevel };
+      valueFields: [...r.valueFields], allowedFields: [...r.allowedFields], riskLevel: r.riskLevel, ...access };
   });
 }
 
