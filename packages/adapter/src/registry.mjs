@@ -20,6 +20,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * @property {string | null} revokedAt
  * @property {string} [egressPolicyHash] the sandbox's effective egress policy when bound (egress-policy.mjs)
  * @property {string | null} [egressPolicyAnchor] where that hash is anchored on Hedera, or null when it is not
+ * @property {{ tenantId?: string, userId?: string }} [accessPrincipal] the tenant and user this sandbox acts for, set by
+ *   the operator at bind time; the principal of a route whose `access.principal` is "binding" (access.mjs)
  */
 
 /** @param {unknown} doc @returns {Map<string, Binding>} */
@@ -41,6 +43,14 @@ export function parseRegistry(doc) {
     if (b.egressPolicyHash !== undefined && !isEgressPolicyHash(b.egressPolicyHash)) throw new Error(`${where}: egressPolicyHash must be sha256:<64 hex>`);
     if (b.egressPolicyAnchor !== undefined && b.egressPolicyAnchor !== null && typeof b.egressPolicyAnchor !== 'string') {
       throw new Error(`${where}: egressPolicyAnchor must be a string or null`);
+    }
+    if (b.accessPrincipal !== undefined) {
+      const p = b.accessPrincipal;
+      const bad = (/** @type {unknown} */ v) => v !== undefined && (typeof v !== 'string' || !v.trim());
+      if (!p || typeof p !== 'object' || Array.isArray(p) || bad(p.tenantId) || bad(p.userId) || (p.tenantId === undefined && p.userId === undefined)
+        || Object.keys(p).some((k) => k !== 'tenantId' && k !== 'userId')) {
+        throw new Error(`${where}: accessPrincipal must be { tenantId?, userId? } with at least one non-empty string`);
+      }
     }
     map.set(b.sandboxId.toLowerCase(), { ...b, sandboxId: b.sandboxId.toLowerCase() });
   }

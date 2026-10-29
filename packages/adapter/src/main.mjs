@@ -55,12 +55,13 @@ const gate = gateOn
       escalations: openEscalations(env.ADAPTER_ESCALATIONS ?? 'state/escalations.json', { log }),
     })
   : null;
+const registry = openRegistry(env.ADAPTER_REGISTRY ?? 'state/bindings.json', { log });
 const handlers = createAdapterHandlers({
   verifyToken,
   audience,
   maxPayloadBytes: Number(env.ADAPTER_MAX_PAYLOAD ?? 1048576),
   routeSets,
-  registry: openRegistry(env.ADAPTER_REGISTRY ?? 'state/bindings.json', { log }),
+  registry,
   journal,
   gate,
   responseBinding: true,
@@ -72,7 +73,7 @@ const { server, port } = await startMiddlewareServer({
   bind,
   tls: { certPem: readFileSync(required('ADAPTER_TLS_CERT')), keyPem: readFileSync(required('ADAPTER_TLS_KEY')) },
   handlers,
-  responseHandlers: createResponseHandlers({ verifyToken, journal, log }),
+  responseHandlers: createResponseHandlers({ verifyToken, journal, routeSets, registry, log }),
 });
 log({ event: 'listening', bind, port, version: ADAPTER_VERSION, audience, gate: gateOn, routeSets: [...routeSets.keys()] });
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => server.tryShutdown(() => process.exit(0)));

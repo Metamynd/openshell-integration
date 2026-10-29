@@ -10,6 +10,9 @@ export const REASON = Object.freeze({
   UNAVAILABLE: 'metamynd_unavailable',
   ESCALATION_PENDING: 'metamynd_escalation_pending',
   GATE_NOT_CONFIGURED: 'metamynd_gate_not_configured',
+  ACCESS_PRINCIPAL_UNAVAILABLE: 'metamynd_access_principal_unavailable',
+  ACCESS_CONTEXT_MISMATCH: 'metamynd_access_context_mismatch',
+  ACCESS_CONTEXT_UNCHECKABLE: 'metamynd_access_context_uncheckable',
   INTERNAL: 'metamynd_internal_error',
 });
 
