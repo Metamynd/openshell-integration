@@ -75,7 +75,7 @@ A Node.js 22 (ESM) gRPC server that implements two services from the pinned prot
 | `config` | `ValidateConfig`: strict schema for the policy `config` Struct (§4.3). It rejects unknown keys. |
 | `binding` | `sandbox_id` → `Binding` lookup from the registry (§4.4). A missing, revoked or generation-mismatched binding is denied. |
 | `route` | Matches `(host, port, method, path)` to a route from `routes.json` (§4.2), deny-by-default. Returns the pinned `action` and the field rules. |
-| `output` | A route with `output` (§4.2b) denies, before MetaMynd is asked, a request whose buffered body or query string has a forbidden word. |
+| `output` | A route with `output` (§4.2b) denies, before MetaMynd is asked, a request whose buffered body, query string, path or named headers have a forbidden word. |
 | `canon` | Rejects any request `content-encoding`, a non-JSON `content-type`, oversize bodies and duplicate or conflicting headers. Parses the body with the gateway's `parseStrictJson`, enforces `allowedFields` and `valueFields`, and extracts `{amount, currency, merchant, resource}`. |
 | `signer` | One cached `agentsafe-guard` instance per binding, created with `createGuard({ api, agentDid, keyProvider: 'daemon', daemonSocketPath })`. It calls `buildSignedRequest({ action, amount, currency, merchant, resource, context, trace, payload })` with `payload` = the parsed body and `context` = `{ riskLevel }` taken from the matched route (§4.2). That call produces `payloadDigest`/`payloadSignature` and `envelopeSignature`. |
 | `gate` | `POST {MM_API}/policy/mandate/authorize` with the signed request and a hard deadline (§5.3). It classifies the response into `Verdict {permit, decision, reasonCode, authorizationId, eventId, escalationId, envelopeId}`. Only HTTP 200 with `allow` or `observe` is a permit. |
@@ -237,9 +237,9 @@ Any route, governed or read-only, may carry `output`. It is the same check as `r
   "output": { "forbidden": ["ssn", "falcon"] } }
 ```
 
-- **What is checked.** The request stage checks the buffered request body (up to OpenShell's 4 MiB) and every name and value in the query string. A JSON body is checked string by string, values and object keys. A form body is decoded. Any other body is checked as one text. Headers and the path are not checked.
+- **What is checked.** The request stage checks the buffered request body (up to OpenShell's 4 MiB) and every name and value in the query string. A JSON body is checked string by string, values and object keys. A form body is decoded. Any other body is checked as one text. The path is checked too, each segment decoded (unless `path: false`), and the headers the route names in `output.headers`. Matching is NFKC plus Unicode default case folding, split into words; a forbidden word in a script written without spaces (Chinese, Thai and others) is matched as a substring.
 - **Matching.** Text is folded (NFKC, invisible format characters removed, then case folding) and split at Unicode word boundaries. A word, or a run of letters or digits inside one, equal to a forbidden word refuses the request: `SSN`, fullwidth `ｓｓｎ`, `my_ssn` and `ssn123` all match `ssn`, while `lessons` and `s s n` do not. It catches a mistake, not an agent trying to evade it.
-- **Refused.** The request is denied with `metamynd_output_forbidden_word` before MetaMynd is asked, so no hold is claimed and nothing is sent. A body that is not UTF-8, JSON that is not strict, or a form or query string that does not decode is denied with `metamynd_output_uncheckable`. The journal records `output: "refused"` with the code and the path, never the word.
+- **Refused.** The request is denied with `metamynd_output_forbidden_word` before MetaMynd is asked, so no hold is claimed and nothing is sent. A body that is not UTF-8, JSON that is not strict, or a form, query string or path that does not decode is denied with `metamynd_output_uncheckable`. The journal records `output: "refused"` with the code and the path, never the word.
 - **Setup.** Each forbidden entry must be exactly one word; a phrase is refused when the routes file loads.
 
 ### 4.3 Policy `config` Struct (validated by `ValidateConfig`)

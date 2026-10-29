@@ -235,7 +235,7 @@ export function createAdapterHandlers({ verifyToken, audience, maxPayloadBytes, 
       // of MetaMynd (no hold is claimed). The journal names where the word is, never the word.
       if (route.output) {
         const contentType = (req.headers ?? []).filter((/** @type {any} */ h) => h.name === 'content-type').map((/** @type {any} */ h) => h.value).join(',') || undefined;
-        const refusal = checkOutputRequest(req.body ?? new Uint8Array(0), String(target.query ?? ''), contentType, route.output);
+        const refusal = checkOutputRequest(req.body ?? new Uint8Array(0), String(target.query ?? ''), contentType, route.output, { path: String(target.path ?? ''), headers: req.headers ?? [] });
         if (refusal) {
           Object.assign(entry, { output: 'refused', reasonCode: refusal.reasonCode, path: refusal.path });
           return deny(mapMetaMyndReason(refusal.reasonCode), `${refusal.reasonCode} at ${refusal.path || '(body)'}${refusal.detail ? `: ${refusal.detail}` : ''}`);
