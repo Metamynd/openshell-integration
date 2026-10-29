@@ -4,6 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { methodMatches, pathMatches } from '@metamynd/agentsafe-http-gateway/route-match';
 import { validateRouteAccess } from './access.mjs';
+import { validateRouteOutput } from './output.mjs';
 
 const RISK_LEVELS = new Set(['low', 'medium', 'high', 'critical']);
 
@@ -18,6 +19,7 @@ const RISK_LEVELS = new Set(['low', 'medium', 'high', 'critical']);
  * @property {string[]} [allowedFields]
  * @property {'low' | 'medium' | 'high' | 'critical'} [riskLevel] required for governed routes
  * @property {import('./access.mjs').RouteAccess} [access] withhold an answer naming another tenant or user (access.mjs)
+ * @property {import('./output.mjs').RouteOutput} [output] refuse a request whose text has a forbidden word (output.mjs)
  */
 
 /** @param {unknown} raw @param {string} source @returns {Route[]} */
@@ -30,7 +32,11 @@ export function validateRoutes(raw, source) {
     if (!Number.isInteger(r.port) || r.port < 1 || r.port > 65535) throw new Error(`${where}: port must be 1-65535`);
     if (typeof r.method !== 'string' || typeof r.path !== 'string') throw new Error(`${where}: method and path are required`);
     // A read-only passthrough route is where another tenant's records are most likely to come back, so `access` applies to both kinds.
-    const access = r.access === undefined ? {} : { access: validateRouteAccess(r.access, where) };
+    const access = {
+      ...(r.access === undefined ? {} : { access: validateRouteAccess(r.access, where) }),
+      // A read-only route's query string leaves the sandbox too, so `output` also applies to both kinds.
+      ...(r.output === undefined ? {} : { output: validateRouteOutput(r.output, where) }),
+    };
     if (r.action === null) return { host: r.host.toLowerCase(), port: r.port, method: r.method, path: r.path, action: null, ...access };
     if (typeof r.action !== 'string' || !r.action) throw new Error(`${where}: action must be a string or null`);
     if (!RISK_LEVELS.has(r.riskLevel)) throw new Error(`${where}: governed routes need riskLevel low|medium|high|critical`);

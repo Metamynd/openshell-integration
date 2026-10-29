@@ -6,12 +6,13 @@
 import grpc from '@grpc/grpc-js';
 import { accessPrincipal, checkAccessBody } from './access.mjs';
 import { canonicalise } from './canon.mjs';
+import { checkOutputRequest } from './output.mjs';
 import { buildManifest, checkGatewayMetadata, structToObject } from './describe.mjs';
 import { ExtensionAuthError } from './jwt.mjs';
 import { REASON, isValidReasonCode, mapMetaMyndReason } from './reasons.mjs';
 import { matchRoute } from './routes.mjs';
 
-export const ADAPTER_VERSION = '0.3.0-m3';
+export const ADAPTER_VERSION = '0.4.0-m3';
 
 const WHOLE_BODY = 'HTTP_RESPONSE_BODY_MODE_WHOLE_BODY_BYTES';
 // Statuses that carry no body: nothing to withhold.
@@ -230,6 +231,16 @@ export function createAdapterHandlers({ verifyToken, audience, maxPayloadBytes, 
       // Under an access check the answer is compared with the principal this sandbox is bound for; with none to compare
       // against, nothing is sent (the response stage would only withhold the answer of a call that already ran).
       if (route.access && !accessPrincipal(route.access, binding)) return deny(REASON.ACCESS_PRINCIPAL_UNAVAILABLE, 'no access principal for this sandbox');
+      // Under an output check, a request whose body or query string has a forbidden word is never sent, and nothing is asked
+      // of MetaMynd (no hold is claimed). The journal names where the word is, never the word.
+      if (route.output) {
+        const contentType = (req.headers ?? []).filter((/** @type {any} */ h) => h.name === 'content-type').map((/** @type {any} */ h) => h.value).join(',') || undefined;
+        const refusal = checkOutputRequest(req.body ?? new Uint8Array(0), String(target.query ?? ''), contentType, route.output, { path: String(target.path ?? ''), headers: req.headers ?? [] });
+        if (refusal) {
+          Object.assign(entry, { output: 'refused', reasonCode: refusal.reasonCode, path: refusal.path });
+          return deny(mapMetaMyndReason(refusal.reasonCode), `${refusal.reasonCode} at ${refusal.path || '(body)'}${refusal.detail ? `: ${refusal.detail}` : ''}`);
+        }
+      }
       if (route.action === null) {
         Object.assign(entry, { decision: 'passthrough' });
         return { allow: true, osReasonCode: '' };

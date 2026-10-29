@@ -13,6 +13,8 @@ export const REASON = Object.freeze({
   ACCESS_PRINCIPAL_UNAVAILABLE: 'metamynd_access_principal_unavailable',
   ACCESS_CONTEXT_MISMATCH: 'metamynd_access_context_mismatch',
   ACCESS_CONTEXT_UNCHECKABLE: 'metamynd_access_context_uncheckable',
+  OUTPUT_FORBIDDEN_WORD: 'metamynd_output_forbidden_word',
+  OUTPUT_UNCHECKABLE: 'metamynd_output_uncheckable',
   INTERNAL: 'metamynd_internal_error',
 });
 
