@@ -7,7 +7,8 @@ each one before it reaches the service. We would much rather hear about a weakne
 
 **Do not open a public issue for a security report.**
 
-Email **security@metamynd.ai**.
+Use GitHub's [private vulnerability reporting](https://github.com/Metamynd/openshell-integration/security/advisories/new)
+on this repository, or email **security@metamynd.ai**.
 
 Include what you have: the commit or version, what you did, what happened, and what you expected. A rough report is
 more useful to us than a polished one you never send.
