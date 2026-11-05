@@ -1,5 +1,7 @@
 # MetaMynd × NVIDIA OpenShell integration
 
+[![HOL Guard](https://img.shields.io/endpoint?url=https%3A%2F%2Fhol.org%2Fapi%2Fregistry%2Fbadges%2Fplugin%3Fslug%3Dmetamynd%252Fopenshell-integration%26metric%3Drelease)](https://hol.org/registry/plugins/metamynd%2Fopenshell-integration?utm_source=hol_marketplace&utm_medium=plugins_badge&utm_campaign=plugins&utm_content=metamynd%2Fopenshell-integration&ref=plugin-author-27aa10b0)
+
 A proof of concept that puts MetaMynd's agent-authorization decisions behind [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) supervisor middleware. OpenShell supplies containment, egress control and credential isolation. MetaMynd supplies business authority: live mandates, spend and merchant rules, human escalation, behavioural anomaly checks, per-agent identity, and an anchored evidence trail.
 
 This is a POC built on public, released extension points. It is not a claim of partnership, endorsement or a completed product integration.
