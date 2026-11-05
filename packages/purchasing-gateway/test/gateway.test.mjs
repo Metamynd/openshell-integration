@@ -6,7 +6,7 @@ import { createHttpGateway } from '@metamynd/agentsafe-http-gateway';
 import { createMockPurchasing } from '../../mock-purchasing/src/server.mjs';
 import { createForward, createPurchasingServer } from '../src/gateway.mjs';
 
-const TOKEN = 'upstream-token';
+const TOKEN = 'example-upstream-token';
 const LEDGER = 'ledger-token';
 /** @type {{ decision: import('@metamynd/agentsafe-http-gateway').ServiceVerdict['decision'], reasonCode: string }} */
 let verdict = { decision: 'allow', reasonCode: 'AUTHORIZED' };

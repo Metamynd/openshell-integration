@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMockPurchasing, validatePurchase } from '../src/server.mjs';
 
-const LEDGER_TOKEN = 'ledger-secret';
+const LEDGER_TOKEN = 'example-ledger-token';
 /** @type {import('node:http').Server} */
 let server;
 let base = '';
