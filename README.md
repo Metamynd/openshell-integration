@@ -44,4 +44,17 @@ npm run check                  # lint, tsc --checkJs, node:test
 
 Then follow [`docs/runbook.md`](docs/runbook.md). It needs a MetaMynd tenant (`.env.poc`, gitignored) and an OpenShell `v0.1.2` gateway.
 
+## Install as an AI coding plugin
+
+A small plugin walks your coding agent through the runbook on a suitable host. It is for evaluating the POC, and it installs instructions only: no MCP server, hooks or background process.
+
+Claude Code:
+
+```text
+/plugin marketplace add Metamynd/openshell-integration
+/plugin install metamynd-openshell-poc@metamynd-openshell
+```
+
+Codex loads the same skill through `.codex-plugin/plugin.json`.
+
 OpenShell is licensed under Apache-2.0 by NVIDIA. NVIDIA and OpenShell are trademarks of their respective owners.

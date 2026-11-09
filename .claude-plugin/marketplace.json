@@ -1,0 +1,19 @@
+{
+  "name": "metamynd-openshell",
+  "owner": {
+    "name": "MetaMynd",
+    "url": "https://metamynd.ai"
+  },
+  "metadata": {
+    "description": "The MetaMynd and NVIDIA OpenShell proof-of-concept plugin."
+  },
+  "plugins": [
+    {
+      "name": "metamynd-openshell-poc",
+      "source": "./",
+      "description": "Run the MetaMynd and NVIDIA OpenShell proof of concept: a sandboxed purchase authorized by MetaMynd before it executes. For evaluation, not production.",
+      "version": "0.1.0",
+      "license": "MIT"
+    }
+  ]
+}

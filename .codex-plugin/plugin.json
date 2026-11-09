@@ -1,0 +1,29 @@
+{
+  "name": "metamynd-openshell-poc",
+  "version": "0.1.0",
+  "description": "Run the MetaMynd and NVIDIA OpenShell proof of concept: a sandboxed purchase authorized by MetaMynd before it executes. For evaluation, not production.",
+  "author": {
+    "name": "MetaMynd",
+    "url": "https://metamynd.ai"
+  },
+  "homepage": "https://github.com/Metamynd/openshell-integration#readme",
+  "repository": "https://github.com/Metamynd/openshell-integration",
+  "license": "MIT",
+  "keywords": ["openshell", "ai-agents", "governance", "authorization", "sandbox", "proof-of-concept"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "MetaMynd OpenShell Integration (POC)",
+    "shortDescription": "Run the MetaMynd and OpenShell proof of concept",
+    "longDescription": "Walks through reproducing a proof of concept in which a purchase from an NVIDIA OpenShell sandbox is authorized by MetaMynd before it executes. Testnet agents and a mock purchasing API only.",
+    "developerName": "MetaMynd",
+    "category": "Security",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://metamynd.ai",
+    "privacyPolicyURL": "https://metamynd.ai/en/legal/privacy-policy",
+    "termsOfServiceURL": "https://metamynd.ai/en/legal/terms-of-service",
+    "composerIcon": "./assets/logo.png",
+    "logo": "./assets/logo.png",
+    "screenshots": ["./assets/adapter-tests.png"],
+    "defaultPrompt": ["Check this host and run the OpenShell proof of concept"]
+  }
+}
